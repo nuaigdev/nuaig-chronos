@@ -29,7 +29,7 @@ export default function SettingsPage() {
 
   const fetchHolidays = async () => {
     const { data } = await supabase.from('holidays').select('*').order('date')
-    setHolidays((data || []) as Holiday[])
+    setHolidays((data || []) as unknown as Holiday[])
   }
 
   const saveSettings = async () => {

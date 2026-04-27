@@ -40,7 +40,7 @@ export default function TimeLogsPage() {
       .gte('log_date', formatDate(weekStart, 'yyyy-MM-dd'))
       .lte('log_date', formatDate(weekEnd, 'yyyy-MM-dd'))
       .order('log_date', { ascending: true })
-    setTimeLogs((data || []) as TimeLog[])
+    setTimeLogs((data || []) as unknown as TimeLog[])
     setLoading(false)
   }
 
@@ -50,12 +50,12 @@ export default function TimeLogsPage() {
     const ids = memberProjs?.map(p => p.project_id) || []
     if (ids.length === 0) { setProjects([]); return }
     const { data } = await supabase.from('projects').select('id, name').in('id', ids).eq('status', 'active')
-    setProjects((data || []) as Project[])
+    setProjects((data || []) as unknown as Project[])
   }
 
   const fetchTasks = async (projectId: string) => {
     const { data } = await supabase.from('tasks').select('id, name').eq('project_id', projectId).neq('status', 'completed')
-    setTasks((data || []) as Task[])
+    setTasks((data || []) as unknown as Task[])
   }
 
   const handleSave = async () => {

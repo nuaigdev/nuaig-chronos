@@ -35,7 +35,7 @@ export default function ApprovalsPage() {
       .order('submitted_at', { ascending: true })
     if (statusFilter !== 'all') query = query.eq('status', statusFilter)
     const { data } = await query
-    setTimesheets((data || []) as TimesheetWithUser[])
+    setTimesheets((data || []) as unknown as TimesheetWithUser[])
     setLoading(false)
   }
 
@@ -46,7 +46,7 @@ export default function ApprovalsPage() {
       .select('*, project:projects(name), task:tasks(name)')
       .eq('timesheet_id', timesheetId)
       .order('log_date')
-    setLogs(prev => ({ ...prev, [timesheetId]: (data || []) as TimeLog[] }))
+    setLogs(prev => ({ ...prev, [timesheetId]: (data || []) as unknown as TimeLog[] }))
   }
 
   const toggleExpand = (id: string) => {

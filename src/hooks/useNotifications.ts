@@ -23,7 +23,7 @@ export function useNotifications() {
       .limit(50)
 
     if (data) {
-      const typed = data as AppNotification[]
+      const typed = data as unknown as AppNotification[]
       setNotifications(typed)
       setUnreadCount(typed.filter((n) => !n.is_read).length)
     }
@@ -32,7 +32,7 @@ export function useNotifications() {
   const markAsRead = async (id: string) => {
     await supabase
       .from('notifications')
-      .update({ is_read: true } as never)
+      .update({ is_read: true })
       .eq('id', id)
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
@@ -44,7 +44,7 @@ export function useNotifications() {
     if (!user) return
     await supabase
       .from('notifications')
-      .update({ is_read: true } as never)
+      .update({ is_read: true })
       .eq('user_id', user.id)
       .eq('is_read', false)
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))

@@ -68,6 +68,7 @@ export interface Project {
   // Joined
   client?: Client
   members?: ProjectMember[]
+  project_members?: ProjectMember[]
   tasks?: Task[]
   total_logged_hours?: number
 }
@@ -260,22 +261,276 @@ export interface CreateClientForm {
 }
 
 // ============================================
+// DB ROW TYPES (actual columns only, no joins, nullable as | null)
+// Used exclusively in the Database interface below.
+// ============================================
+
+interface ProfileRow {
+  id: string
+  email: string
+  full_name: string
+  avatar_url: string | null
+  role: UserRole
+  department: string | null
+  manager_id: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+interface ClientRow {
+  id: string
+  name: string
+  email: string | null
+  phone: string | null
+  address: string | null
+  website: string | null
+  industry: string | null
+  notes: string | null
+  is_active: boolean
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+interface ProjectRow {
+  id: string
+  name: string
+  description: string | null
+  client_id: string | null
+  status: ProjectStatus
+  start_date: string | null
+  end_date: string | null
+  estimated_hours: number | null
+  budget: number | null
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+interface ProjectMemberRow {
+  id: string
+  project_id: string
+  user_id: string
+  assigned_by: string
+  assigned_at: string
+}
+
+interface TaskRow {
+  id: string
+  project_id: string
+  name: string
+  description: string | null
+  status: TaskStatus
+  estimated_hours: number | null
+  assigned_to: string | null
+  created_by: string
+  due_date: string | null
+  created_at: string
+  updated_at: string
+}
+
+interface TimesheetRow {
+  id: string
+  user_id: string
+  week_start_date: string
+  week_end_date: string
+  status: TimesheetStatus
+  submitted_at: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  review_comment: string | null
+  total_hours: number
+  created_at: string
+  updated_at: string
+}
+
+interface TimeLogRow {
+  id: string
+  timesheet_id: string
+  user_id: string
+  project_id: string
+  task_id: string | null
+  log_date: string
+  hours: number
+  description: string | null
+  created_at: string
+  updated_at: string
+}
+
+interface AppNotificationRow {
+  id: string
+  user_id: string
+  type: NotificationType
+  title: string
+  message: string
+  is_read: boolean
+  related_id: string | null
+  created_at: string
+}
+
+interface HolidayRow {
+  id: string
+  name: string
+  date: string
+  is_optional: boolean
+  created_by: string
+  created_at: string
+}
+
+interface AdminSettingRow {
+  id: string
+  key: string
+  value: Record<string, unknown>
+  updated_by: string | null
+  updated_at: string
+}
+
+// ============================================
 // SUPABASE DATABASE TYPE
 // ============================================
 
 export interface Database {
   public: {
     Tables: {
-      profiles: { Row: Profile; Insert: Omit<Profile, 'created_at' | 'updated_at'>; Update: Partial<Profile> }
-      clients: { Row: Client; Insert: Omit<Client, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Client> }
-      projects: { Row: Project; Insert: Omit<Project, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Project> }
-      project_members: { Row: ProjectMember; Insert: Omit<ProjectMember, 'id' | 'assigned_at'>; Update: Partial<ProjectMember> }
-      tasks: { Row: Task; Insert: Omit<Task, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Task> }
-      timesheets: { Row: Timesheet; Insert: Omit<Timesheet, 'id' | 'created_at' | 'updated_at'>; Update: Partial<Timesheet> }
-      time_logs: { Row: TimeLog; Insert: Omit<TimeLog, 'id' | 'created_at' | 'updated_at'>; Update: Partial<TimeLog> }
-      notifications: { Row: AppNotification; Insert: Omit<AppNotification, 'id' | 'created_at'>; Update: Partial<AppNotification> }
-      holidays: { Row: Holiday; Insert: Omit<Holiday, 'id' | 'created_at'>; Update: Partial<Holiday> }
-      admin_settings: { Row: AdminSetting; Insert: Omit<AdminSetting, 'id' | 'updated_at'>; Update: Partial<AdminSetting> }
+      profiles: {
+        Row: ProfileRow
+        Insert: {
+          id: string
+          email: string
+          full_name: string
+          avatar_url?: string | null
+          role?: UserRole
+          department?: string | null
+          manager_id?: string | null
+          is_active?: boolean
+        }
+        Update: Partial<ProfileRow>
+        Relationships: []
+      }
+      clients: {
+        Row: ClientRow
+        Insert: {
+          name: string
+          email?: string | null
+          phone?: string | null
+          address?: string | null
+          website?: string | null
+          industry?: string | null
+          notes?: string | null
+          is_active?: boolean
+          created_by?: string | null
+        }
+        Update: Partial<ClientRow>
+        Relationships: []
+      }
+      projects: {
+        Row: ProjectRow
+        Insert: {
+          name: string
+          description?: string | null
+          client_id?: string | null
+          status?: ProjectStatus
+          start_date?: string | null
+          end_date?: string | null
+          estimated_hours?: number | null
+          budget?: number | null
+          created_by: string
+        }
+        Update: Partial<ProjectRow>
+        Relationships: []
+      }
+      project_members: {
+        Row: ProjectMemberRow
+        Insert: {
+          project_id: string
+          user_id: string
+          assigned_by: string
+        }
+        Update: Partial<ProjectMemberRow>
+        Relationships: []
+      }
+      tasks: {
+        Row: TaskRow
+        Insert: {
+          project_id: string
+          name: string
+          description?: string | null
+          status?: TaskStatus
+          estimated_hours?: number | null
+          assigned_to?: string | null
+          created_by: string
+          due_date?: string | null
+        }
+        Update: Partial<TaskRow>
+        Relationships: []
+      }
+      timesheets: {
+        Row: TimesheetRow
+        Insert: {
+          user_id: string
+          week_start_date: string
+          week_end_date: string
+          status?: TimesheetStatus
+          submitted_at?: string | null
+          reviewed_by?: string | null
+          reviewed_at?: string | null
+          review_comment?: string | null
+          total_hours?: number
+        }
+        Update: Partial<TimesheetRow>
+        Relationships: []
+      }
+      time_logs: {
+        Row: TimeLogRow
+        Insert: {
+          timesheet_id: string
+          user_id: string
+          project_id: string
+          task_id?: string | null
+          log_date: string
+          hours: number
+          description?: string | null
+        }
+        Update: Partial<TimeLogRow>
+        Relationships: []
+      }
+      notifications: {
+        Row: AppNotificationRow
+        Insert: {
+          user_id: string
+          type: NotificationType
+          title: string
+          message: string
+          is_read?: boolean
+          related_id?: string | null
+        }
+        Update: Partial<AppNotificationRow>
+        Relationships: []
+      }
+      holidays: {
+        Row: HolidayRow
+        Insert: {
+          name: string
+          date: string
+          is_optional?: boolean
+          created_by: string
+        }
+        Update: Partial<HolidayRow>
+        Relationships: []
+      }
+      admin_settings: {
+        Row: AdminSettingRow
+        Insert: {
+          key: string
+          value: Record<string, unknown>
+          updated_by?: string | null
+        }
+        Update: Partial<AdminSettingRow>
+        Relationships: []
+      }
     }
+    Views: { [_ in never]: never }
+    Functions: { [_ in never]: never }
   }
 }

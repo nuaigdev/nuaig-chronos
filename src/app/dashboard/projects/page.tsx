@@ -48,7 +48,7 @@ export default function ProjectsPage() {
     }
 
     const { data } = await query
-    setProjects((data || []) as Project[])
+    setProjects((data || []) as unknown as Project[])
     setLoading(false)
   }
 

@@ -57,7 +57,7 @@ export default function ReportsPage() {
       // By project
       const projMap: Record<string, number> = {}
       logs.forEach(l => {
-        const name = (l.project as { name: string } | null)?.name || 'Unknown'
+        const name = (l.project as unknown as { name: string } | null)?.name || 'Unknown'
         projMap[name] = (projMap[name] || 0) + l.hours
       })
       setHoursByProject(Object.entries(projMap).map(([name, hours]) => ({ name, hours })).sort((a, b) => b.hours - a.hours).slice(0, 8))
@@ -65,7 +65,7 @@ export default function ReportsPage() {
       // By employee
       const empMap: Record<string, number> = {}
       logs.forEach(l => {
-        const name = (l.user as { full_name: string } | null)?.full_name || 'Unknown'
+        const name = (l.user as unknown as { full_name: string } | null)?.full_name || 'Unknown'
         empMap[name] = (empMap[name] || 0) + l.hours
       })
       setHoursByEmployee(Object.entries(empMap).map(([name, hours]) => ({ name, hours })).sort((a, b) => b.hours - a.hours).slice(0, 10))

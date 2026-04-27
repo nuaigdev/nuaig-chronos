@@ -38,7 +38,7 @@ export default function TasksPage() {
     if (statusFilter) query = query.eq('status', statusFilter)
     if (!canManageProjects) query = query.eq('assigned_to', profile.id)
     const { data } = await query
-    setTasks((data || []) as Task[])
+    setTasks((data || []) as unknown as Task[])
     setLoading(false)
   }
 
@@ -50,7 +50,7 @@ export default function TasksPage() {
       if (ids.length > 0) query = query.in('id', ids)
     }
     const { data } = await query
-    setProjects((data || []) as Project[])
+    setProjects((data || []) as unknown as Project[])
   }
 
   const fetchProjectMembers = async (projectId: string) => {
@@ -58,7 +58,11 @@ export default function TasksPage() {
       .from('project_members')
       .select('user:profiles(id, full_name)')
       .eq('project_id', projectId)
-    setMembers((data || []).map((m: { user: Profile }) => m.user).filter(Boolean))
+    setMembers(
+      ((data as unknown as Array<{ user: Profile | null }>) || [])
+        .map(m => m.user)
+        .filter((u): u is Profile => u !== null)
+    )
   }
 
   const openCreate = () => {

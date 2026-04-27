@@ -29,7 +29,7 @@ export default function TeamPage() {
     let query = supabase.from('profiles').select('*').order('full_name')
     if (roleFilter) query = query.eq('role', roleFilter)
     const { data } = await query
-    setMembers((data || []) as Profile[])
+    setMembers((data || []) as unknown as Profile[])
     setLoading(false)
   }
 

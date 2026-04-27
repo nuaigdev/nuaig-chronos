@@ -29,7 +29,7 @@ export default function TimesheetsPage() {
       .select('*, reviewer:profiles!timesheets_reviewed_by_fkey(full_name)')
       .eq('user_id', profile.id)
       .order('week_start_date', { ascending: false })
-    setTimesheets((data || []) as Timesheet[])
+    setTimesheets((data || []) as unknown as Timesheet[])
     setLoading(false)
   }
 
@@ -40,7 +40,7 @@ export default function TimesheetsPage() {
       .select('*, project:projects(name), task:tasks(name)')
       .eq('timesheet_id', timesheetId)
       .order('log_date')
-    setLogs(prev => ({ ...prev, [timesheetId]: (data || []) as TimeLog[] }))
+    setLogs(prev => ({ ...prev, [timesheetId]: (data || []) as unknown as TimeLog[] }))
   }
 
   const toggleExpand = (id: string) => {

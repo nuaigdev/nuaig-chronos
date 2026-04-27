@@ -25,7 +25,7 @@ export default function ClientsPage() {
   const fetchClients = async () => {
     setLoading(true)
     const { data } = await supabase.from('clients').select('*').order('name')
-    setClients((data || []) as Client[])
+    setClients((data || []) as unknown as Client[])
     setLoading(false)
   }
 
