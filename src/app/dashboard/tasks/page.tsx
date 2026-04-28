@@ -25,7 +25,7 @@ export default function TasksPage() {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ project_id: '', name: '', description: '', estimated_hours: '', assigned_to: '', due_date: '', status: 'todo' })
 
-  useEffect(() => { if (profile) { fetchTasks(); fetchProjects() } }, [profile, projectFilter, statusFilter])
+  useEffect(() => { if (profile) { fetchTasks(); fetchProjects() } }, [profile?.id, projectFilter, statusFilter])
 
   const fetchTasks = async () => {
     if (!profile) return

@@ -35,7 +35,7 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     if (!id || !profile) return
     loadAll()
-  }, [id, profile])
+  }, [id, profile?.id])
 
   const loadAll = async () => {
     setLoading(true)

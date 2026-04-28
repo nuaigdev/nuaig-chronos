@@ -93,7 +93,10 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [user, fetchNotifications])
+  // fetchNotifications is intentionally omitted: it is stable for the lifetime of a user session
+  // (useCallback deps = [user]), so including it would cause the channel to rebuild on every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user])
 
   return (
     <NotificationsContext.Provider value={{ notifications, unreadCount, markAsRead, markAllAsRead, refresh: fetchNotifications }}>

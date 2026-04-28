@@ -14,6 +14,9 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
+// Single stable client instance — never recreate inside a component
+const supabase = createClient()
+
 const NAV_ITEMS = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', roles: ['admin', 'manager', 'employee'] },
   { href: '/dashboard/clients', icon: Building2, label: 'Clients', roles: ['admin', 'manager'] },
@@ -32,7 +35,6 @@ export default function Sidebar() {
   const router = useRouter()
   const { profile, isAdmin, isManager } = useAuth()
   const { unreadCount } = useNotifications()
-  const supabase = createClient()
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [passwordForm, setPasswordForm] = useState({ newPassword: '', confirmPassword: '' })
   const [changingPassword, setChangingPassword] = useState(false)
