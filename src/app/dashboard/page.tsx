@@ -29,7 +29,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchStats()
-  }, [profile])
+  }, [profile?.id])
 
   const fetchStats = async () => {
     if (!profile) return

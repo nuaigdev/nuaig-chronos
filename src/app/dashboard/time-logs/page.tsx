@@ -29,8 +29,8 @@ export default function TimeLogsPage() {
   const { start: weekStart, end: weekEnd } = getWeekRange(currentWeek)
   const weekDays = getWeekDays(weekStart)
 
-  useEffect(() => { fetchTimeLogs() }, [currentWeek, profile])
-  useEffect(() => { fetchProjects() }, [profile])
+  useEffect(() => { fetchTimeLogs() }, [currentWeek, profile?.id])
+  useEffect(() => { fetchProjects() }, [profile?.id])
   useEffect(() => { if (form.project_id) fetchTasks(form.project_id) }, [form.project_id])
 
   const fetchTimeLogs = async () => {

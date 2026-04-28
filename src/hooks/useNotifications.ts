@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { AppNotification } from '@/types'
 import { useAuth } from './useAuth'
@@ -8,7 +8,23 @@ import { useAuth } from './useAuth'
 // Single stable client instance
 const supabase = createClient()
 
-export function useNotifications() {
+interface NotificationsContextType {
+  notifications: AppNotification[]
+  unreadCount: number
+  markAsRead: (id: string) => Promise<void>
+  markAllAsRead: () => Promise<void>
+  refresh: () => Promise<void>
+}
+
+const NotificationsContext = createContext<NotificationsContextType>({
+  notifications: [],
+  unreadCount: 0,
+  markAsRead: async () => {},
+  markAllAsRead: async () => {},
+  refresh: async () => {},
+})
+
+export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const { user } = useAuth()
@@ -79,5 +95,13 @@ export function useNotifications() {
     }
   }, [user, fetchNotifications])
 
-  return { notifications, unreadCount, markAsRead, markAllAsRead, refresh: fetchNotifications }
+  return (
+    <NotificationsContext.Provider value={{ notifications, unreadCount, markAsRead, markAllAsRead, refresh: fetchNotifications }}>
+      {children}
+    </NotificationsContext.Provider>
+  )
+}
+
+export function useNotifications() {
+  return useContext(NotificationsContext)
 }

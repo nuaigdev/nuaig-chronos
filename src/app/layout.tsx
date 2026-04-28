@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Inter, Outfit, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import { AuthProvider } from '@/hooks/useAuth'
+import { NotificationsProvider } from '@/hooks/useNotifications'
 import { Toaster } from 'react-hot-toast'
 
 const inter = Inter({
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className="dark">
       <body className={`${inter.variable} ${outfit.variable} ${jetbrainsMono.variable} bg-chronos-bg text-chronos-text antialiased`}>
         <AuthProvider>
+          <NotificationsProvider>
           {children}
           <Toaster
             position="top-right"
@@ -50,6 +52,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               error: { iconTheme: { primary: '#f87171', secondary: '#1a1f2e' } },
             }}
           />
+          </NotificationsProvider>
         </AuthProvider>
       </body>
     </html>

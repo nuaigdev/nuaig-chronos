@@ -10,7 +10,7 @@ import toast from 'react-hot-toast'
 
 const supabase = createClient()
 
-type Tab = 'overview' | 'projects' | 'timesheets'
+type Tab = 'overview' | 'projects' | 'timesheets' | 'employees'
 type Period = 'week' | 'month' | 'quarter' | 'year'
 
 interface EnrichedLog {
@@ -94,6 +94,7 @@ export default function ReportsPage() {
   const [timesheetRows, setTimesheetRows] = useState<TimesheetRow[]>([])
   const [weeklyTrend, setWeeklyTrend] = useState<{ week: string; hours: number }[]>([])
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({})
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
     if (!profile) return
@@ -334,8 +335,8 @@ export default function ReportsPage() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '4px', background: 'var(--chronos-surface-2)', borderRadius: '10px', padding: '4px', width: 'fit-content' }}>
-        {(['overview', 'projects', 'timesheets'] as Tab[]).map(t => (
-          <button key={t} style={tabStyle(t)} onClick={() => setTab(t)}>
+        {(['overview', 'projects', 'timesheets', ...(canManageProjects ? ['employees'] : [])] as Tab[]).map(t => (
+          <button key={t} style={tabStyle(t)} onClick={() => { setTab(t); setSelectedEmployeeId(null) }}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
@@ -570,6 +571,178 @@ export default function ReportsPage() {
               </div>
             </div>
           )}
+
+          {/* EMPLOYEES TAB */}
+          {tab === 'employees' && canManageProjects && (() => {
+            const selectedEmp = selectedEmployeeId ? employeeStats.find(e => e.id === selectedEmployeeId) : null
+            const empLogs = selectedEmployeeId ? enrichedLogs.filter(l => l.user_id === selectedEmployeeId) : []
+
+            // Build per-period breakdown for selected employee
+            const { start, end } = getPeriodRange(period)
+            const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 1 })
+            const weeklyData = weeks.map(ws => {
+              const wEnd = endOfWeek(ws, { weekStartsOn: 1 })
+              const wS = format(ws, 'yyyy-MM-dd')
+              const wE = format(wEnd, 'yyyy-MM-dd')
+              const hours = empLogs.filter(l => l.log_date >= wS && l.log_date <= wE).reduce((s, l) => s + l.hours, 0)
+              return { week: format(ws, 'MMM d'), hours: parseFloat(hours.toFixed(1)) }
+            })
+
+            // Per-project breakdown for employee
+            const empProjMap: Record<string, number> = {}
+            for (const l of empLogs) empProjMap[l.projectName] = (empProjMap[l.projectName] || 0) + l.hours
+            const empProjData = Object.entries(empProjMap).map(([name, hours]) => ({ name, hours: parseFloat(hours.toFixed(1)) })).sort((a, b) => b.hours - a.hours)
+
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {!selectedEmployeeId ? (
+                  // Employee list
+                  <>
+                    <div style={{ fontFamily: 'var(--font-display)', fontSize: '14px', fontWeight: 700, color: 'var(--chronos-text-muted)' }}>
+                      Click an employee to view their detailed breakdown
+                    </div>
+                    {employeeStats.length === 0 ? (
+                      <div className="card-base" style={{ padding: '60px', textAlign: 'center', color: 'var(--chronos-text-muted)', fontSize: '14px' }}>
+                        No employee data for this period
+                      </div>
+                    ) : (
+                      <div className="card-base" style={{ overflow: 'hidden' }}>
+                        <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--chronos-border)', display: 'grid', gridTemplateColumns: '1fr 120px 120px 120px', gap: '12px' }}>
+                          {['Employee', 'Department', 'Hours Logged', ''].map(h => (
+                            <span key={h} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</span>
+                          ))}
+                        </div>
+                        {employeeStats.map((emp, i) => (
+                          <div
+                            key={emp.id}
+                            className="table-row"
+                            onClick={() => setSelectedEmployeeId(emp.id)}
+                            style={{ padding: '14px 20px', display: 'grid', gridTemplateColumns: '1fr 120px 120px 120px', gap: '12px', alignItems: 'center', borderBottom: i < employeeStats.length - 1 ? '1px solid var(--chronos-border)' : 'none', cursor: 'pointer' }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <div style={{ width: '30px', height: '30px', borderRadius: '8px', background: `linear-gradient(135deg, ${COLORS[i % COLORS.length]}, ${COLORS[(i + 2) % COLORS.length]})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 700, color: 'white', flexShrink: 0 }}>
+                                {emp.name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                              </div>
+                              <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--chronos-text)' }}>{emp.name}</span>
+                            </div>
+                            <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{emp.department || '—'}</span>
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: ACCENT }}>{emp.hours.toFixed(1)}h</span>
+                            <span style={{ fontSize: '12px', color: ACCENT, fontWeight: 600 }}>View Details →</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  // Employee detail view
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <button
+                        onClick={() => setSelectedEmployeeId(null)}
+                        style={{ background: 'var(--chronos-surface-2)', border: '1px solid var(--chronos-border)', borderRadius: '8px', padding: '7px 14px', cursor: 'pointer', fontSize: '13px', color: 'var(--chronos-text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}
+                        onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-text)'}
+                        onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                      >
+                        ← Back to All Employees
+                      </button>
+                      <div>
+                        <div style={{ fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 800 }}>{selectedEmp?.name}</div>
+                        <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{selectedEmp?.department || 'No department'} · {period} view</div>
+                      </div>
+                    </div>
+
+                    {/* Summary stats */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px' }}>
+                      <StatCard icon={<Clock size={20} />} label="Total Hours" value={`${empLogs.reduce((s, l) => s + l.hours, 0).toFixed(1)}h`} sub={`this ${period}`} />
+                      <StatCard icon={<FolderKanban size={20} />} label="Projects Worked" value={empProjData.length} sub="with logged time" />
+                      <StatCard icon={<TrendingUp size={20} />} label="Active Days" value={new Set(empLogs.map(l => l.log_date)).size} sub="days with logs" />
+                    </div>
+
+                    {/* Weekly trend for this employee */}
+                    <div className="card-base" style={{ padding: '20px' }}>
+                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '14px', marginBottom: '16px' }}>Weekly Hours — {selectedEmp?.name}</div>
+                      {weeklyData.every(w => w.hours === 0) ? (
+                        <div style={{ textAlign: 'center', color: 'var(--chronos-text-muted)', fontSize: '13px', padding: '40px' }}>No hours logged this period</div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height={220}>
+                          <BarChart data={weeklyData} margin={{ top: 4, right: 4, bottom: 0, left: -10 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false} />
+                            <XAxis dataKey="week" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                            <YAxis tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                            <Tooltip
+                              contentStyle={{ background: '#1a1a2e', border: '1px solid #2a2a3e', borderRadius: '8px', fontSize: '12px' }}
+                              labelStyle={{ color: '#e2e8f0', fontWeight: 600 }}
+                              itemStyle={{ color: ACCENT }}
+                              formatter={(v: number) => [`${v}h`, 'Hours']}
+                            />
+                            <Bar dataKey="hours" radius={[6, 6, 0, 0]}>
+                              {weeklyData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+
+                    {/* Per-project breakdown */}
+                    {empProjData.length > 0 && (
+                      <div className="card-base" style={{ overflow: 'hidden' }}>
+                        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--chronos-border)', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '14px' }}>Hours by Project</div>
+                        {empProjData.map((p, i) => {
+                          const totalEmpHours = empLogs.reduce((s, l) => s + l.hours, 0)
+                          const pct = totalEmpHours > 0 ? Math.round((p.hours / totalEmpHours) * 100) : 0
+                          return (
+                            <div key={p.name} style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '16px', borderBottom: i < empProjData.length - 1 ? '1px solid var(--chronos-border)' : 'none' }}>
+                              <div style={{ width: '10px', height: '10px', borderRadius: '3px', background: COLORS[i % COLORS.length], flexShrink: 0 }} />
+                              <span style={{ flex: 1, fontSize: '13px', fontWeight: 600, color: 'var(--chronos-text)' }}>{p.name}</span>
+                              <div style={{ width: '160px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
+                                  <span style={{ fontSize: '11px', color: 'var(--chronos-text-muted)' }}>{pct}%</span>
+                                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 700, color: ACCENT }}>{p.hours}h</span>
+                                </div>
+                                <div style={{ height: '4px', borderRadius: '2px', background: 'var(--chronos-surface-2)', overflow: 'hidden' }}>
+                                  <div style={{ height: '100%', borderRadius: '2px', width: `${pct}%`, background: COLORS[i % COLORS.length] }} />
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+
+                    {/* Timesheets for this employee */}
+                    {(() => {
+                      const empTimesheets = timesheetRows.filter(t => t.user_id === selectedEmployeeId)
+                      if (empTimesheets.length === 0) return null
+                      return (
+                        <div className="card-base" style={{ overflow: 'hidden' }}>
+                          <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--chronos-border)', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '14px' }}>Timesheets</div>
+                          <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--chronos-border)', display: 'grid', gridTemplateColumns: '1.4fr 1fr 100px 80px', gap: '12px' }}>
+                            {['Week', 'Submitted', 'Status', 'Hours'].map(h => (
+                              <span key={h} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</span>
+                            ))}
+                          </div>
+                          {empTimesheets.map((t, i) => (
+                            <div key={t.id} className="table-row" style={{ padding: '13px 20px', display: 'grid', gridTemplateColumns: '1.4fr 1fr 100px 80px', gap: '12px', alignItems: 'center', borderBottom: i < empTimesheets.length - 1 ? '1px solid var(--chronos-border)' : 'none' }}>
+                              <span style={{ fontSize: '13px', color: 'var(--chronos-text)' }}>
+                                {format(new Date(t.week_start_date + 'T00:00:00'), 'MMM d')} – {format(new Date(t.week_end_date + 'T00:00:00'), 'MMM d, yyyy')}
+                              </span>
+                              <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
+                                {t.submitted_at ? format(new Date(t.submitted_at), 'MMM d, HH:mm') : '—'}
+                              </span>
+                              <span style={{ fontSize: '11px', padding: '3px 9px', borderRadius: '100px', border: `1px solid ${tsStatusBadgeColor[t.status]}40`, color: tsStatusBadgeColor[t.status], background: `${tsStatusBadgeColor[t.status]}15`, width: 'fit-content', fontWeight: 600, textTransform: 'capitalize' }}>
+                                {t.status}
+                              </span>
+                              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: ACCENT }}>{t.total_hours.toFixed(1)}h</span>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })()}
+                  </>
+                )}
+              </div>
+            )
+          })()}
         </>
       )}
     </div>

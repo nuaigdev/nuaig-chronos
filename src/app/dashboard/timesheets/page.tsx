@@ -20,7 +20,7 @@ export default function TimesheetsPage() {
   const [logs, setLogs] = useState<Record<string, TimeLog[]>>({})
   const [checkingMissed, setCheckingMissed] = useState(false)
 
-  useEffect(() => { fetchTimesheets() }, [profile])
+  useEffect(() => { fetchTimesheets() }, [profile?.id])
 
   // Auto-check for missed timesheets on Monday (once per day, manager only)
   useEffect(() => {
@@ -30,7 +30,7 @@ export default function TimesheetsPage() {
     const todayStr = format(new Date(), 'yyyy-MM-dd')
     if (localStorage.getItem(key) === todayStr) return
     checkMissedTimesheets(true).then(() => localStorage.setItem(key, todayStr))
-  }, [profile, canManageProjects])
+  }, [profile?.id, canManageProjects])
 
   const fetchTimesheets = async () => {
     if (!profile) return
@@ -61,13 +61,6 @@ export default function TimesheetsPage() {
   }
 
   const submitTimesheet = async (id: string) => {
-    // Timesheets can only be submitted on Friday, Saturday, or Sunday
-    const dayOfWeek = new Date().getDay() // 0=Sun, 5=Fri, 6=Sat
-    if (dayOfWeek !== 0 && dayOfWeek !== 5 && dayOfWeek !== 6) {
-      toast.error('Timesheets can only be submitted on Friday, Saturday, or Sunday — after the work week is complete.')
-      return
-    }
-
     if (!confirm('Submit this timesheet for approval?')) return
     const { error } = await supabase
       .from('timesheets')
@@ -189,7 +182,7 @@ export default function TimesheetsPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <div style={{ flex: 1 }}>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Timesheets</h1>
-          <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>Weekly timesheet submissions — submit on Friday, Saturday, or Sunday</p>
+          <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>Weekly timesheet submissions for approval</p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           {canManageProjects && (

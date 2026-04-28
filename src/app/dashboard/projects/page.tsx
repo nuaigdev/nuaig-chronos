@@ -43,7 +43,7 @@ export default function ProjectsPage() {
     setLoading(true)
     let query = supabase
       .from('projects')
-      .select(`*, client:clients(id, name), project_members(user_id)`)
+      .select(`*, client:clients(id, name), project_members(user_id), created_by`)
       .order('created_at', { ascending: false })
 
     if (statusFilter !== 'all') query = query.eq('status', statusFilter)
@@ -201,6 +201,12 @@ export default function ProjectsPage() {
   }
 
   const removeMember = async (userId: string) => {
+    // Prevent removing the project owner
+    const currentProject = projects.find(p => p.id === membersProjectId)
+    if (currentProject && (currentProject as Project & { created_by?: string }).created_by === userId) {
+      toast.error('Cannot remove the project owner from the project.')
+      return
+    }
     const { error } = await supabase.from('project_members').delete()
       .eq('project_id', membersProjectId)
       .eq('user_id', userId)
@@ -418,7 +424,10 @@ export default function ProjectsPage() {
                 <p style={{ fontSize: '13px', color: 'var(--chronos-text-muted)', padding: '12px', textAlign: 'center' }}>No members assigned yet</p>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  {projectMembers.map(m => (
+                  {projectMembers.map(m => {
+                    const currentProject = projects.find(p => p.id === membersProjectId)
+                    const isOwner = currentProject && (currentProject as Project & { created_by?: string }).created_by === m.id
+                    return (
                     <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', borderRadius: '8px', background: 'var(--chronos-surface-2)' }}>
                       <div style={{ width: '30px', height: '30px', borderRadius: '8px', background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 700, color: 'white', flexShrink: 0 }}>
                         {getInitials(m.full_name)}
@@ -427,7 +436,10 @@ export default function ProjectsPage() {
                         <p style={{ fontSize: '13px', fontWeight: 600 }}>{m.full_name}</p>
                         <p style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', textTransform: 'capitalize' }}>{m.role}</p>
                       </div>
-                      {canManageProjects && (
+                      {isOwner && (
+                        <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '100px', background: 'rgba(167,139,250,0.15)', color: 'var(--chronos-accent)', border: '1px solid rgba(167,139,250,0.3)', flexShrink: 0 }}>OWNER</span>
+                      )}
+                      {canManageProjects && !isOwner && (
                         <button onClick={() => removeMember(m.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px', borderRadius: '4px' }}
                           onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-danger)'}
                           onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
@@ -435,7 +447,8 @@ export default function ProjectsPage() {
                         ><X size={14} /></button>
                       )}
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>

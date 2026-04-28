@@ -24,7 +24,7 @@ export default function ApprovalsPage() {
   const [comment, setComment] = useState('')
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { fetchTimesheets() }, [statusFilter, profile])
+  useEffect(() => { fetchTimesheets() }, [statusFilter, profile?.id])
 
   const fetchTimesheets = async () => {
     if (!profile || !canManageProjects) return
