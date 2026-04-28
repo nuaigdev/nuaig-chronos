@@ -43,7 +43,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       setNotifications(typed)
       setUnreadCount(typed.filter((n) => !n.is_read).length)
     }
-  }, [user])
+  }, [user?.id])
 
   const markAsRead = async (id: string) => {
     await supabase
@@ -94,9 +94,10 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       supabase.removeChannel(channel)
     }
   // fetchNotifications is intentionally omitted: it is stable for the lifetime of a user session
-  // (useCallback deps = [user]), so including it would cause the channel to rebuild on every render.
+  // (useCallback deps = [user?.id]). Using [user?.id] instead of [user] prevents channel
+  // teardown/rebuild on every navigation when middleware re-fires onAuthStateChange with same user.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user])
+  }, [user?.id])
 
   return (
     <NotificationsContext.Provider value={{ notifications, unreadCount, markAsRead, markAllAsRead, refresh: fetchNotifications }}>

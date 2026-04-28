@@ -232,7 +232,7 @@ export default function ReportsPage() {
     } finally {
       setLoading(false)
     }
-  }, [profile, period, canManageProjects])
+  }, [profile?.id, period, canManageProjects])
 
   useEffect(() => { fetchData() }, [fetchData])
 
