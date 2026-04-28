@@ -4,22 +4,25 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { TimeLog, Project, Task } from '@/types'
-import { Modal, FormField, Select, EmptyState, SectionHeader } from '@/components/ui'
+import { Modal, FormField, Select, EmptyState } from '@/components/ui'
 import { formatDate, formatHours, getWeekRange, getWeekDays } from '@/utils'
-import { Clock, Plus, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react'
+import { Clock, Plus, ChevronLeft, ChevronRight, Trash2, Edit2 } from 'lucide-react'
 import { addWeeks, subWeeks, format } from 'date-fns'
 import toast from 'react-hot-toast'
 
 const supabase = createClient()
 
+type TimeLogWithTimesheet = TimeLog & { timesheet?: { id: string; status: string } | null }
+
 export default function TimeLogsPage() {
   const { profile } = useAuth()
   const [currentWeek, setCurrentWeek] = useState(new Date())
-  const [timeLogs, setTimeLogs] = useState<TimeLog[]>([])
+  const [timeLogs, setTimeLogs] = useState<TimeLogWithTimesheet[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
+  const [editLog, setEditLog] = useState<TimeLogWithTimesheet | null>(null)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ project_id: '', task_id: '', log_date: formatDate(new Date(), 'yyyy-MM-dd'), hours: '', description: '' })
 
@@ -35,12 +38,12 @@ export default function TimeLogsPage() {
     setLoading(true)
     const { data } = await supabase
       .from('time_logs')
-      .select('*, project:projects(id, name), task:tasks(id, name)')
+      .select('*, project:projects(id, name), task:tasks(id, name), timesheet:timesheets(id, status)')
       .eq('user_id', profile.id)
       .gte('log_date', formatDate(weekStart, 'yyyy-MM-dd'))
       .lte('log_date', formatDate(weekEnd, 'yyyy-MM-dd'))
       .order('log_date', { ascending: true })
-    setTimeLogs((data || []) as unknown as TimeLog[])
+    setTimeLogs((data || []) as unknown as TimeLogWithTimesheet[])
     setLoading(false)
   }
 
@@ -58,6 +61,31 @@ export default function TimeLogsPage() {
     setTasks((data || []) as unknown as Task[])
   }
 
+  const openCreate = () => {
+    setEditLog(null)
+    setForm({ project_id: '', task_id: '', log_date: formatDate(new Date(), 'yyyy-MM-dd'), hours: '', description: '' })
+    setTasks([])
+    setShowModal(true)
+  }
+
+  const openEdit = (log: TimeLogWithTimesheet) => {
+    const ts = log.timesheet
+    if (ts?.status === 'submitted' || ts?.status === 'approved') {
+      toast.error('Cannot edit logs from a submitted or approved timesheet')
+      return
+    }
+    setEditLog(log)
+    setForm({
+      project_id: log.project_id,
+      task_id: log.task_id || '',
+      log_date: log.log_date,
+      hours: log.hours.toString(),
+      description: log.description || '',
+    })
+    if (log.project_id) fetchTasks(log.project_id)
+    setShowModal(true)
+  }
+
   const handleSave = async () => {
     if (!form.project_id || !form.hours || !form.log_date) { toast.error('Please fill in required fields'); return }
     const hrs = parseFloat(form.hours)
@@ -65,46 +93,65 @@ export default function TimeLogsPage() {
 
     setSaving(true)
     try {
-      // Get or create timesheet for this week
-      let timesheetId: string
-      const weekStartStr = formatDate(weekStart, 'yyyy-MM-dd')
-      const { data: ts } = await supabase
-        .from('timesheets')
-        .select('id, status')
-        .eq('user_id', profile!.id)
-        .eq('week_start_date', weekStartStr)
-        .single()
-
-      if (ts) {
-        if (ts.status === 'submitted' || ts.status === 'approved') {
-          toast.error('Cannot add logs to a submitted or approved timesheet')
+      if (editLog) {
+        // Guard again in save (in case state changed)
+        const ts = editLog.timesheet
+        if (ts?.status === 'submitted' || ts?.status === 'approved') {
+          toast.error('Cannot modify a submitted or approved timesheet')
           return
         }
-        timesheetId = ts.id
-      } else {
-        const { data: newTs, error } = await supabase.from('timesheets').insert({
-          user_id: profile!.id,
-          week_start_date: weekStartStr,
-          week_end_date: formatDate(weekEnd, 'yyyy-MM-dd'),
-          status: 'draft',
-        }).select('id').single()
+        const { error } = await supabase.from('time_logs').update({
+          project_id: form.project_id,
+          task_id: form.task_id || null,
+          log_date: form.log_date,
+          hours: hrs,
+          description: form.description || null,
+        }).eq('id', editLog.id)
         if (error) throw error
-        timesheetId = newTs!.id
+        toast.success('Time log updated!')
+      } else {
+        // Get or create timesheet for this week
+        let timesheetId: string
+        const weekStartStr = formatDate(weekStart, 'yyyy-MM-dd')
+        const { data: ts } = await supabase
+          .from('timesheets')
+          .select('id, status')
+          .eq('user_id', profile!.id)
+          .eq('week_start_date', weekStartStr)
+          .single()
+
+        if (ts) {
+          if (ts.status === 'submitted' || ts.status === 'approved') {
+            toast.error('Cannot add logs to a submitted or approved timesheet')
+            return
+          }
+          timesheetId = ts.id
+        } else {
+          const { data: newTs, error } = await supabase.from('timesheets').insert({
+            user_id: profile!.id,
+            week_start_date: weekStartStr,
+            week_end_date: formatDate(weekEnd, 'yyyy-MM-dd'),
+            status: 'draft',
+          }).select('id').single()
+          if (error) throw error
+          timesheetId = newTs!.id
+        }
+
+        const { error } = await supabase.from('time_logs').insert({
+          timesheet_id: timesheetId,
+          user_id: profile!.id,
+          project_id: form.project_id,
+          task_id: form.task_id || null,
+          log_date: form.log_date,
+          hours: hrs,
+          description: form.description || null,
+        })
+        if (error) throw error
+        toast.success('Time logged!')
       }
 
-      const { error } = await supabase.from('time_logs').insert({
-        timesheet_id: timesheetId,
-        user_id: profile!.id,
-        project_id: form.project_id,
-        task_id: form.task_id || null,
-        log_date: form.log_date,
-        hours: hrs,
-        description: form.description || null,
-      })
-      if (error) throw error
-
-      toast.success('Time logged!')
       setShowModal(false)
+      setEditLog(null)
       setForm({ project_id: '', task_id: '', log_date: formatDate(new Date(), 'yyyy-MM-dd'), hours: '', description: '' })
       fetchTimeLogs()
     } catch (err: unknown) {
@@ -114,9 +161,14 @@ export default function TimeLogsPage() {
     }
   }
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (log: TimeLogWithTimesheet) => {
+    const ts = log.timesheet
+    if (ts?.status === 'submitted' || ts?.status === 'approved') {
+      toast.error('Cannot delete logs from a submitted or approved timesheet')
+      return
+    }
     if (!confirm('Delete this time log?')) return
-    await supabase.from('time_logs').delete().eq('id', id)
+    await supabase.from('time_logs').delete().eq('id', log.id)
     toast.success('Time log deleted')
     fetchTimeLogs()
   }
@@ -126,24 +178,23 @@ export default function TimeLogsPage() {
     const dateStr = format(day, 'yyyy-MM-dd')
     acc[dateStr] = timeLogs.filter(l => l.log_date === dateStr)
     return acc
-  }, {} as Record<string, TimeLog[]>)
+  }, {} as Record<string, TimeLogWithTimesheet[]>)
 
   const today = formatDate(new Date(), 'yyyy-MM-dd')
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <div style={{ flex: 1 }}>
-          <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Time Logs</h1>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Time Logs</h1>
           <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>
             Week of {formatDate(weekStart, 'MMM d')} – {formatDate(weekEnd, 'MMM d, yyyy')} · {formatHours(totalHours)} logged
           </p>
         </div>
-        <button className="btn-primary" onClick={() => setShowModal(true)}><Plus size={14} />Log Time</button>
+        <button className="btn-primary" onClick={openCreate}><Plus size={14} />Log Time</button>
       </div>
 
-      {/* Week Navigator */}
+      {/* Week navigator */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <button className="btn-secondary" style={{ padding: '8px 12px' }} onClick={() => setCurrentWeek(subWeeks(currentWeek, 1))}>
           <ChevronLeft size={14} />
@@ -161,8 +212,8 @@ export default function TimeLogsPage() {
                 border: `1px solid ${isToday ? 'rgba(59,130,246,0.3)' : 'var(--chronos-border)'}`,
               }}>
                 <div style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', marginBottom: '4px' }}>{format(day, 'EEE')}</div>
-                <div style={{ fontSize: '14px', fontFamily: 'Syne, sans-serif', fontWeight: 700, color: isToday ? 'var(--chronos-accent)' : 'var(--chronos-text)' }}>{format(day, 'd')}</div>
-                <div style={{ fontSize: '11px', color: dayHours > 0 ? 'var(--chronos-success)' : 'var(--chronos-text-muted)', marginTop: '3px', fontFamily: 'JetBrains Mono, monospace' }}>
+                <div style={{ fontSize: '14px', fontFamily: 'var(--font-display)', fontWeight: 700, color: isToday ? 'var(--chronos-accent)' : 'var(--chronos-text)' }}>{format(day, 'd')}</div>
+                <div style={{ fontSize: '11px', color: dayHours > 0 ? 'var(--chronos-success)' : 'var(--chronos-text-muted)', marginTop: '3px', fontFamily: 'var(--font-mono)' }}>
                   {dayHours > 0 ? `${dayHours}h` : '—'}
                 </div>
               </div>
@@ -174,7 +225,6 @@ export default function TimeLogsPage() {
         </button>
       </div>
 
-      {/* Logs grouped by day */}
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
           <div style={{ width: '28px', height: '28px', border: '3px solid var(--chronos-border)', borderTopColor: 'var(--chronos-accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
@@ -184,7 +234,7 @@ export default function TimeLogsPage() {
           icon={<Clock size={28} />}
           title="No time logged this week"
           description="Start logging your time to track your work."
-          action={<button className="btn-primary" onClick={() => setShowModal(true)}><Plus size={14} />Log Time</button>}
+          action={<button className="btn-primary" onClick={openCreate}><Plus size={14} />Log Time</button>}
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -195,15 +245,17 @@ export default function TimeLogsPage() {
             return (
               <div key={dateStr} className="card-base" style={{ overflow: 'hidden' }}>
                 <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--chronos-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--chronos-surface-2)' }}>
-                  <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '14px' }}>{format(day, 'EEEE, MMMM d')}</span>
-                  <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '13px', color: 'var(--chronos-accent)' }}>{formatHours(dayHours)}</span>
+                  <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '14px' }}>{format(day, 'EEEE, MMMM d')}</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--chronos-accent)' }}>{formatHours(dayHours)}</span>
                 </div>
                 {dayLogs.map(log => {
                   const proj = log.project as { name: string } | undefined
                   const task = log.task as { name: string } | undefined
+                  const ts = log.timesheet
+                  const isLocked = ts?.status === 'submitted' || ts?.status === 'approved'
                   return (
                     <div key={log.id} className="table-row" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <div style={{ width: '48px', height: '36px', borderRadius: '8px', background: 'var(--chronos-accent-glow)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '13px', color: 'var(--chronos-accent)', flexShrink: 0 }}>
+                      <div style={{ width: '48px', height: '36px', borderRadius: '8px', background: 'var(--chronos-accent-glow)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '13px', color: 'var(--chronos-accent)', flexShrink: 0 }}>
                         {log.hours}h
                       </div>
                       <div style={{ flex: 1 }}>
@@ -211,10 +263,22 @@ export default function TimeLogsPage() {
                         {task && <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '2px' }}>{task.name}</div>}
                         {log.description && <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '2px', fontStyle: 'italic' }}>{log.description}</div>}
                       </div>
-                      <button onClick={() => handleDelete(log.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '6px', borderRadius: '6px', display: 'flex' }}
-                        onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-danger)'}
-                        onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
-                      ><Trash2 size={13} /></button>
+                      {isLocked ? (
+                        <span style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', padding: '2px 8px', borderRadius: '100px', background: 'var(--chronos-surface-2)' }}>
+                          {ts?.status}
+                        </span>
+                      ) : (
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button onClick={() => openEdit(log)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '6px', borderRadius: '6px', display: 'flex' }}
+                            onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-accent)'}
+                            onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                          ><Edit2 size={13} /></button>
+                          <button onClick={() => handleDelete(log)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '6px', borderRadius: '6px', display: 'flex' }}
+                            onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-danger)'}
+                            onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                          ><Trash2 size={13} /></button>
+                        </div>
+                      )}
                     </div>
                   )
                 })}
@@ -224,14 +288,18 @@ export default function TimeLogsPage() {
         </div>
       )}
 
-      {/* Log Time Modal */}
-      <Modal isOpen={showModal} onClose={() => setShowModal(false)} title="Log Time">
+      <Modal isOpen={showModal} onClose={() => { setShowModal(false); setEditLog(null) }} title={editLog ? 'Edit Time Log' : 'Log Time'}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <FormField label="Date" required>
             <input type="date" className="input-base" value={form.log_date} onChange={e => setForm(f => ({ ...f, log_date: e.target.value }))} />
           </FormField>
           <FormField label="Project" required>
-            <Select value={form.project_id} onChange={v => { setForm(f => ({ ...f, project_id: v, task_id: '' })); setTasks([]) }} options={projects.map(p => ({ value: p.id, label: p.name }))} placeholder="Select project" />
+            <Select
+              value={form.project_id}
+              onChange={v => { setForm(f => ({ ...f, project_id: v, task_id: '' })); setTasks([]) }}
+              options={projects.map(p => ({ value: p.id, label: p.name }))}
+              placeholder="Select project"
+            />
           </FormField>
           {tasks.length > 0 && (
             <FormField label="Task">
@@ -245,9 +313,9 @@ export default function TimeLogsPage() {
             <textarea className="input-base" placeholder="What did you work on?" rows={3} style={{ resize: 'vertical' }} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
           </FormField>
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button className="btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
+            <button className="btn-secondary" onClick={() => { setShowModal(false); setEditLog(null) }}>Cancel</button>
             <button className="btn-primary" onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving...' : 'Log Time'}
+              {saving ? 'Saving...' : editLog ? 'Update Log' : 'Log Time'}
             </button>
           </div>
         </div>

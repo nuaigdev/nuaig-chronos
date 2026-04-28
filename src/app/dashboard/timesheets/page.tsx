@@ -4,22 +4,33 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { Timesheet, TimeLog } from '@/types'
-import { StatusBadge, EmptyState, ProgressBar } from '@/components/ui'
+import { StatusBadge, EmptyState } from '@/components/ui'
 import { formatDate, formatHours, getWeekRange } from '@/utils'
-import { FileText, ChevronRight, Send, RefreshCw } from 'lucide-react'
+import { FileText, ChevronRight, Send, RefreshCw, BellRing } from 'lucide-react'
 import { format, subWeeks } from 'date-fns'
 import toast from 'react-hot-toast'
 
 const supabase = createClient()
 
 export default function TimesheetsPage() {
-  const { profile } = useAuth()
+  const { profile, canManageProjects } = useAuth()
   const [timesheets, setTimesheets] = useState<Timesheet[]>([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [logs, setLogs] = useState<Record<string, TimeLog[]>>({})
+  const [checkingMissed, setCheckingMissed] = useState(false)
 
   useEffect(() => { fetchTimesheets() }, [profile])
+
+  // Auto-check for missed timesheets on Monday (once per day, manager only)
+  useEffect(() => {
+    if (!profile || !canManageProjects) return
+    if (new Date().getDay() !== 1) return // Only on Monday
+    const key = `missed_check_${profile.id}`
+    const todayStr = format(new Date(), 'yyyy-MM-dd')
+    if (localStorage.getItem(key) === todayStr) return
+    checkMissedTimesheets(true).then(() => localStorage.setItem(key, todayStr))
+  }, [profile, canManageProjects])
 
   const fetchTimesheets = async () => {
     if (!profile) return
@@ -50,6 +61,13 @@ export default function TimesheetsPage() {
   }
 
   const submitTimesheet = async (id: string) => {
+    // Timesheets can only be submitted on Friday, Saturday, or Sunday
+    const dayOfWeek = new Date().getDay() // 0=Sun, 5=Fri, 6=Sat
+    if (dayOfWeek !== 0 && dayOfWeek !== 5 && dayOfWeek !== 6) {
+      toast.error('Timesheets can only be submitted on Friday, Saturday, or Sunday — after the work week is complete.')
+      return
+    }
+
     if (!confirm('Submit this timesheet for approval?')) return
     const { error } = await supabase
       .from('timesheets')
@@ -57,20 +75,21 @@ export default function TimesheetsPage() {
       .eq('id', id)
     if (error) { toast.error('Failed to submit'); return }
 
-    // Notify managers
+    // Notify all managers/admins
     const { data: managers } = await supabase
       .from('profiles')
       .select('id')
       .in('role', ['admin', 'manager'])
-    if (managers) {
-      const notifications = managers.map(m => ({
-        user_id: m.id,
-        type: 'timesheet_submitted' as const,
-        title: 'Timesheet Submitted',
-        message: `${profile?.full_name} submitted a timesheet for review.`,
-        related_id: id,
-      }))
-      await supabase.from('notifications').insert(notifications)
+    if (managers?.length) {
+      await supabase.from('notifications').insert(
+        managers.map(m => ({
+          user_id: m.id,
+          type: 'timesheet_submitted' as const,
+          title: 'Timesheet Submitted',
+          message: `${profile?.full_name} submitted a timesheet for review.`,
+          related_id: id,
+        }))
+      )
     }
 
     toast.success('Timesheet submitted for approval!')
@@ -82,7 +101,6 @@ export default function TimesheetsPage() {
     const weekStartStr = format(weekStart, 'yyyy-MM-dd')
     const existing = timesheets.find(t => t.week_start_date === weekStartStr)
     if (existing) { toast('Current week timesheet already exists'); return }
-
     const { error } = await supabase.from('timesheets').insert({
       user_id: profile!.id,
       week_start_date: weekStartStr,
@@ -91,6 +109,72 @@ export default function TimesheetsPage() {
     })
     if (error) toast.error('Failed to create timesheet')
     else { toast.success('Timesheet created'); fetchTimesheets() }
+  }
+
+  const checkMissedTimesheets = async (silent = false) => {
+    if (!profile || !canManageProjects) return
+    setCheckingMissed(true)
+    try {
+      const { start: prevStart } = getWeekRange(subWeeks(new Date(), 1))
+      const prevWeekStartStr = format(prevStart, 'yyyy-MM-dd')
+
+      // Fetch direct reports of this manager
+      const { data: reports } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .eq('manager_id', profile.id)
+        .eq('is_active', true)
+
+      if (!reports?.length) {
+        if (!silent) toast('No direct reports found under your account.')
+        return
+      }
+
+      const reportIds = reports.map(r => r.id)
+
+      // Check who submitted or got approved for the previous week
+      const { data: submitted } = await supabase
+        .from('timesheets')
+        .select('user_id')
+        .in('user_id', reportIds)
+        .eq('week_start_date', prevWeekStartStr)
+        .in('status', ['submitted', 'approved'])
+
+      const submittedIdSet = new Set((submitted || []).map(s => s.user_id))
+      const missed = reports.filter(r => !submittedIdSet.has(r.id))
+
+      if (missed.length === 0) {
+        if (!silent) toast.success('All team members submitted their timesheets for last week!')
+        return
+      }
+
+      const missedNames = missed.map(m => m.full_name).join(', ')
+      const weekLabel = format(prevStart, 'MMM d, yyyy')
+
+      // Notify manager
+      await supabase.from('notifications').insert({
+        user_id: profile.id,
+        type: 'pending_approval_alert' as const,
+        title: 'Missing Timesheet Submissions',
+        message: `The following team members have not submitted their timesheet for the week of ${weekLabel}: ${missedNames}`,
+      })
+
+      // Notify each employee individually
+      await supabase.from('notifications').insert(
+        missed.map(m => ({
+          user_id: m.id,
+          type: 'timesheet_reminder' as const,
+          title: 'Timesheet Not Submitted',
+          message: `You have not submitted your timesheet for the week of ${weekLabel}. Please submit it as soon as possible.`,
+        }))
+      )
+
+      toast.success(`Notified ${missed.length} team member${missed.length > 1 ? 's' : ''} about missing timesheets`)
+    } catch {
+      toast.error('Failed to check missed timesheets')
+    } finally {
+      setCheckingMissed(false)
+    }
   }
 
   const getStatusColor = (status: string) => {
@@ -104,12 +188,19 @@ export default function TimesheetsPage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <div style={{ flex: 1 }}>
-          <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Timesheets</h1>
-          <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>Weekly timesheet submissions and status</p>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Timesheets</h1>
+          <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>Weekly timesheet submissions — submit on Friday, Saturday, or Sunday</p>
         </div>
-        <button className="btn-secondary" onClick={ensureCurrentWeekTimesheet}>
-          <RefreshCw size={14} /> New Timesheet
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {canManageProjects && (
+            <button className="btn-secondary" onClick={() => checkMissedTimesheets(false)} disabled={checkingMissed}>
+              <BellRing size={14} />{checkingMissed ? 'Checking...' : 'Check Missing'}
+            </button>
+          )}
+          <button className="btn-secondary" onClick={ensureCurrentWeekTimesheet}>
+            <RefreshCw size={14} />New Timesheet
+          </button>
+        </div>
       </div>
 
       {loading ? (
@@ -126,7 +217,6 @@ export default function TimesheetsPage() {
             const reviewer = (ts as Timesheet & { reviewer?: { full_name: string } }).reviewer
             return (
               <div key={ts.id} className="card-base" style={{ overflow: 'hidden' }}>
-                {/* Header row */}
                 <div
                   onClick={() => toggleExpand(ts.id)}
                   style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '14px', cursor: 'pointer', transition: 'background 0.15s' }}
@@ -135,7 +225,7 @@ export default function TimesheetsPage() {
                 >
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: getStatusColor(ts.status), flexShrink: 0, boxShadow: `0 0 8px ${getStatusColor(ts.status)}60` }} />
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '15px' }}>
+                    <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '15px' }}>
                       {formatDate(ts.week_start_date + 'T00:00:00', 'MMM d')} – {formatDate(ts.week_end_date + 'T00:00:00', 'MMM d, yyyy')}
                     </div>
                     <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '3px', display: 'flex', gap: '12px' }}>
@@ -158,7 +248,6 @@ export default function TimesheetsPage() {
                   <ChevronRight size={14} style={{ color: 'var(--chronos-text-muted)', transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s', flexShrink: 0 }} />
                 </div>
 
-                {/* Rejection comment */}
                 {ts.status === 'rejected' && ts.review_comment && (
                   <div style={{ margin: '0 20px 12px', padding: '12px', borderRadius: '8px', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)' }}>
                     <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--chronos-danger)', marginBottom: '4px' }}>REJECTION REASON</div>
@@ -166,7 +255,6 @@ export default function TimesheetsPage() {
                   </div>
                 )}
 
-                {/* Expanded logs */}
                 {isExpanded && (
                   <div style={{ borderTop: '1px solid var(--chronos-border)' }}>
                     {!logs[ts.id] ? (
@@ -175,7 +263,6 @@ export default function TimesheetsPage() {
                       <div style={{ padding: '20px', textAlign: 'center', color: 'var(--chronos-text-muted)', fontSize: '13px' }}>No time logs in this timesheet</div>
                     ) : (
                       <>
-                        {/* Group by project */}
                         {Object.entries(
                           logs[ts.id].reduce((acc, log) => {
                             const proj = (log.project as { name: string } | undefined)?.name || 'Unknown'
@@ -187,19 +274,19 @@ export default function TimesheetsPage() {
                           <div key={projName}>
                             <div style={{ padding: '10px 20px', background: 'var(--chronos-surface-2)', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--chronos-border)' }}>
                               <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--chronos-text-subtle)' }}>{projName}</span>
-                              <span style={{ fontSize: '12px', fontFamily: 'JetBrains Mono, monospace', color: 'var(--chronos-accent)' }}>
+                              <span style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--chronos-accent)' }}>
                                 {formatHours(projLogs.reduce((s, l) => s + l.hours, 0))}
                               </span>
                             </div>
                             {projLogs.map(log => (
                               <div key={log.id} className="table-row" style={{ padding: '10px 20px', display: 'flex', gap: '12px', alignItems: 'center' }}>
-                                <div style={{ width: '70px', fontSize: '12px', color: 'var(--chronos-text-muted)', flexShrink: 0 }}>
+                                <div style={{ width: '80px', fontSize: '12px', color: 'var(--chronos-text-muted)', flexShrink: 0 }}>
                                   {formatDate(log.log_date + 'T00:00:00', 'EEE, MMM d')}
                                 </div>
                                 <div style={{ flex: 1, fontSize: '13px', color: 'var(--chronos-text)' }}>
                                   {(log.task as { name: string } | undefined)?.name || log.description || '—'}
                                 </div>
-                                <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '13px', fontWeight: 600, color: 'var(--chronos-text)', flexShrink: 0 }}>
+                                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 600, color: 'var(--chronos-text)', flexShrink: 0 }}>
                                   {log.hours}h
                                 </div>
                               </div>
@@ -207,7 +294,7 @@ export default function TimesheetsPage() {
                           </div>
                         ))}
                         <div style={{ padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid var(--chronos-border)', background: 'var(--chronos-surface-2)' }}>
-                          <span style={{ fontSize: '14px', fontFamily: 'Syne, sans-serif', fontWeight: 700, color: 'var(--chronos-text)' }}>
+                          <span style={{ fontSize: '14px', fontFamily: 'var(--font-display)', fontWeight: 700, color: 'var(--chronos-text)' }}>
                             Total: <span style={{ color: 'var(--chronos-accent)' }}>{formatHours(ts.total_hours)}</span>
                           </span>
                         </div>

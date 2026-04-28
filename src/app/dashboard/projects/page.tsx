@@ -3,16 +3,17 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
-import { Project } from '@/types'
-import { StatusBadge, EmptyState, SectionHeader, Modal, FormField, Select, ProgressBar } from '@/components/ui'
+import { Project, Profile } from '@/types'
+import { StatusBadge, EmptyState, Modal, FormField, Select, ProgressBar } from '@/components/ui'
 import { formatDate, formatHours, getInitials } from '@/utils'
-import { FolderKanban, Plus, Search, Archive, Edit2, Users, Clock } from 'lucide-react'
+import { FolderKanban, Plus, Search, Archive, Edit2, Clock, Users, UserPlus, X } from 'lucide-react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 
 const supabase = createClient()
 
 export default function ProjectsPage() {
+  const { profile, canManageProjects, isAdmin } = useAuth()
   const [projects, setProjects] = useState<Project[]>([])
   const [clients, setClients] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(true)
@@ -22,7 +23,15 @@ export default function ProjectsPage() {
   const [editProject, setEditProject] = useState<Project | null>(null)
   const [form, setForm] = useState({ name: '', description: '', client_id: '', start_date: '', end_date: '', estimated_hours: '', budget: '' })
   const [saving, setSaving] = useState(false)
-  const { profile, canManageProjects } = useAuth()
+
+  // Member management
+  const [showMembersModal, setShowMembersModal] = useState(false)
+  const [membersProjectId, setMembersProjectId] = useState('')
+  const [membersProjectName, setMembersProjectName] = useState('')
+  const [projectMembers, setProjectMembers] = useState<Profile[]>([])
+  const [availableToAdd, setAvailableToAdd] = useState<Profile[]>([])
+  const [memberToAdd, setMemberToAdd] = useState('')
+  const [loadingMembers, setLoadingMembers] = useState(false)
 
   useEffect(() => {
     if (!profile) return
@@ -32,7 +41,6 @@ export default function ProjectsPage() {
 
   const fetchProjects = async (profileId: string, canManage: boolean) => {
     setLoading(true)
-
     let query = supabase
       .from('projects')
       .select(`*, client:clients(id, name), project_members(user_id)`)
@@ -52,18 +60,17 @@ export default function ProjectsPage() {
 
     const projectData = (data || []) as unknown as Array<Project & { project_members: { user_id: string }[] }>
 
-    // Batch-fetch member profiles separately (no direct FK from project_members to profiles)
+    // Batch-fetch member profiles
     const seen = new Set<string>()
     const allUserIds: string[] = []
-    for (const p of projectData) for (const m of (p.project_members || [])) { if (!seen.has(m.user_id)) { seen.add(m.user_id); allUserIds.push(m.user_id) } }
+    for (const p of projectData) for (const m of (p.project_members || [])) {
+      if (!seen.has(m.user_id)) { seen.add(m.user_id); allUserIds.push(m.user_id) }
+    }
     const profileMap: Record<string, { full_name: string; avatar_url: string | null }> = {}
     if (allUserIds.length > 0) {
-      const { data: memberProfiles } = await supabase
-        .from('profiles')
-        .select('id, full_name, avatar_url')
-        .in('id', allUserIds)
+      const { data: memberProfiles } = await supabase.from('profiles').select('id, full_name, avatar_url').in('id', allUserIds)
       for (const p of (memberProfiles || [])) {
-        profileMap[p.id] = { full_name: p.full_name as string, avatar_url: p.avatar_url as string | null }
+        profileMap[p.id as string] = { full_name: p.full_name as string, avatar_url: p.avatar_url as string | null }
       }
     }
 
@@ -74,7 +81,6 @@ export default function ProjectsPage() {
         user: profileMap[m.user_id] ?? { full_name: 'Unknown', avatar_url: null },
       })),
     }))
-
     setProjects(enriched as unknown as Project[])
     setLoading(false)
   }
@@ -142,6 +148,72 @@ export default function ProjectsPage() {
     if (profile) fetchProjects(profile.id, canManageProjects)
   }
 
+  // ── Member management ──────────────────────────────────────
+
+  const openMembersModal = async (projectId: string, projectName: string) => {
+    setMembersProjectId(projectId)
+    setMembersProjectName(projectName)
+    setMemberToAdd('')
+    setShowMembersModal(true)
+    setLoadingMembers(true)
+    await Promise.all([
+      fetchProjectMembersForModal(projectId),
+      fetchAvailableMembers(projectId),
+    ])
+    setLoadingMembers(false)
+  }
+
+  const fetchProjectMembersForModal = async (projectId: string) => {
+    const { data: rows } = await supabase.from('project_members').select('user_id').eq('project_id', projectId)
+    const ids = rows?.map(r => r.user_id) || []
+    if (ids.length === 0) { setProjectMembers([]); return }
+    const { data } = await supabase.from('profiles').select('id, full_name, role').in('id', ids)
+    setProjectMembers((data || []) as unknown as Profile[])
+  }
+
+  const fetchAvailableMembers = async (projectId: string) => {
+    // Get current member IDs to exclude from the add-dropdown
+    const { data: rows } = await supabase.from('project_members').select('user_id').eq('project_id', projectId)
+    const existingIds = new Set((rows || []).map(r => r.user_id))
+
+    // Managers see direct reports; admins see all active users
+    const { data } = isAdmin
+      ? await supabase.from('profiles').select('id, full_name').eq('is_active', true)
+      : await supabase.from('profiles').select('id, full_name').eq('manager_id', profile!.id).eq('is_active', true)
+    const available = ((data || []) as unknown as Profile[]).filter(m => !existingIds.has(m.id))
+    setAvailableToAdd(available)
+  }
+
+  const addMember = async () => {
+    if (!memberToAdd) return
+    const { error } = await supabase.from('project_members').insert({
+      project_id: membersProjectId,
+      user_id: memberToAdd,
+      assigned_by: profile!.id,
+    })
+    if (error) { toast.error('Failed to add member'); return }
+    toast.success('Member added!')
+    setMemberToAdd('')
+    setLoadingMembers(true)
+    await Promise.all([fetchProjectMembersForModal(membersProjectId), fetchAvailableMembers(membersProjectId)])
+    setLoadingMembers(false)
+    if (profile) fetchProjects(profile.id, canManageProjects)
+  }
+
+  const removeMember = async (userId: string) => {
+    const { error } = await supabase.from('project_members').delete()
+      .eq('project_id', membersProjectId)
+      .eq('user_id', userId)
+    if (error) { toast.error('Failed to remove member'); return }
+    toast.success('Member removed')
+    setLoadingMembers(true)
+    await Promise.all([fetchProjectMembersForModal(membersProjectId), fetchAvailableMembers(membersProjectId)])
+    setLoadingMembers(false)
+    if (profile) fetchProjects(profile.id, canManageProjects)
+  }
+
+  // ────────────────────────────────────────────────────────────
+
   const filtered = projects.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
     (p.client as { name: string } | undefined)?.name.toLowerCase().includes(search.toLowerCase())
@@ -152,7 +224,7 @@ export default function ProjectsPage() {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <div style={{ flex: 1 }}>
-          <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Projects</h1>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Projects</h1>
           <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>{filtered.length} project{filtered.length !== 1 ? 's' : ''}</p>
         </div>
         {canManageProjects && (
@@ -179,7 +251,7 @@ export default function ProjectsPage() {
         ))}
       </div>
 
-      {/* Projects Grid */}
+      {/* Projects grid */}
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: '60px' }}>
           <div style={{ width: '28px', height: '28px', border: '3px solid var(--chronos-border)', borderTopColor: 'var(--chronos-accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
@@ -188,7 +260,7 @@ export default function ProjectsPage() {
         <EmptyState
           icon={<FolderKanban size={28} />}
           title="No projects found"
-          description={canManageProjects ? "Create your first project to start tracking time." : "You haven't been assigned to any projects yet."}
+          description={canManageProjects ? 'Create your first project to start tracking time.' : "You haven't been assigned to any projects yet."}
           action={canManageProjects ? <button className="btn-primary" onClick={openCreate}><Plus size={14} />Create Project</button> : undefined}
         />
       ) : (
@@ -201,7 +273,8 @@ export default function ProjectsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <Link href={`/dashboard/projects/${p.id}`} style={{ textDecoration: 'none' }}>
-                      <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '15px', fontWeight: 700, color: 'var(--chronos-text)', marginBottom: '4px', cursor: 'pointer' }}
+                      <h3
+                        style={{ fontFamily: 'var(--font-display)', fontSize: '15px', fontWeight: 700, color: 'var(--chronos-text)', marginBottom: '4px', cursor: 'pointer', transition: 'color 0.15s' }}
                         onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-accent)'}
                         onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text)'}
                       >{p.name}</h3>
@@ -244,7 +317,14 @@ export default function ProjectsPage() {
                 )}
 
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--chronos-border)', paddingTop: '10px' }}>
-                  <div style={{ display: 'flex' }}>
+                  {/* Member avatars — click to manage (managers) or view (employees) */}
+                  <button
+                    onClick={() => openMembersModal(p.id, p.name)}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', borderRadius: '6px' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--chronos-surface-2)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                    title={canManageProjects ? 'Manage members' : 'View members'}
+                  >
                     {members.slice(0, 4).map((m, i) => (
                       <div key={i} style={{
                         width: '24px', height: '24px', borderRadius: '6px',
@@ -253,7 +333,7 @@ export default function ProjectsPage() {
                         fontSize: '9px', fontWeight: 700, color: 'white',
                         marginLeft: i > 0 ? '-6px' : '0',
                         border: '2px solid var(--chronos-surface)',
-                        fontFamily: 'Syne, sans-serif'
+                        fontFamily: 'var(--font-display)',
                       }}>
                         {getInitials(m.user.full_name)}
                       </div>
@@ -263,7 +343,12 @@ export default function ProjectsPage() {
                         +{members.length - 4}
                       </div>
                     )}
-                  </div>
+                    {members.length === 0 && (
+                      <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <Users size={12} />{canManageProjects ? 'Add members' : 'No members'}
+                      </span>
+                    )}
+                  </button>
                   <div style={{ display: 'flex', gap: '12px', fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
                     {p.end_date && (
                       <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -278,7 +363,7 @@ export default function ProjectsPage() {
         </div>
       )}
 
-      {/* Create/Edit Modal */}
+      {/* Create / Edit Project Modal */}
       <Modal isOpen={showModal} onClose={() => setShowModal(false)} title={editProject ? 'Edit Project' : 'New Project'}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <FormField label="Project Name" required>
@@ -314,6 +399,74 @@ export default function ProjectsPage() {
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* Members Modal */}
+      <Modal isOpen={showMembersModal} onClose={() => setShowMembersModal(false)} title={`${membersProjectName} — Team Members`} size="sm">
+        {loadingMembers ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '32px' }}>
+            <div style={{ width: '24px', height: '24px', border: '3px solid var(--chronos-border)', borderTopColor: 'var(--chronos-accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* Current members list */}
+            <div>
+              <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--chronos-text-subtle)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Current Members ({projectMembers.length})
+              </p>
+              {projectMembers.length === 0 ? (
+                <p style={{ fontSize: '13px', color: 'var(--chronos-text-muted)', padding: '12px', textAlign: 'center' }}>No members assigned yet</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {projectMembers.map(m => (
+                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', borderRadius: '8px', background: 'var(--chronos-surface-2)' }}>
+                      <div style={{ width: '30px', height: '30px', borderRadius: '8px', background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 700, color: 'white', flexShrink: 0 }}>
+                        {getInitials(m.full_name)}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <p style={{ fontSize: '13px', fontWeight: 600 }}>{m.full_name}</p>
+                        <p style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', textTransform: 'capitalize' }}>{m.role}</p>
+                      </div>
+                      {canManageProjects && (
+                        <button onClick={() => removeMember(m.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px', borderRadius: '4px' }}
+                          onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-danger)'}
+                          onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                          title="Remove member"
+                        ><X size={14} /></button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Add member (managers only) */}
+            {canManageProjects && (
+              <div style={{ borderTop: '1px solid var(--chronos-border)', paddingTop: '16px' }}>
+                <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--chronos-text-subtle)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Add Member
+                </p>
+                {availableToAdd.length === 0 ? (
+                  <p style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>
+                    {isAdmin ? 'All active users are already members.' : 'All your direct reports are already members.'}
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <Select
+                      value={memberToAdd}
+                      onChange={setMemberToAdd}
+                      options={availableToAdd.map(m => ({ value: m.id, label: m.full_name }))}
+                      placeholder="Select person to add"
+                    />
+                    <button className="btn-primary" onClick={addMember} disabled={!memberToAdd} style={{ flexShrink: 0 }}>
+                      <UserPlus size={14} />Add
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
     </div>
   )

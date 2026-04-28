@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { Task, Project, Profile } from '@/types'
-import { StatusBadge, EmptyState, Modal, FormField, Select } from '@/components/ui'
-import { formatDate, formatHours } from '@/utils'
+import { EmptyState, Modal, FormField, Select } from '@/components/ui'
+import { formatDate } from '@/utils'
 import { CheckSquare, Plus, Search, Edit2, Clock } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -25,7 +25,7 @@ export default function TasksPage() {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ project_id: '', name: '', description: '', estimated_hours: '', assigned_to: '', due_date: '', status: 'todo' })
 
-  useEffect(() => { fetchTasks(); fetchProjects() }, [profile, projectFilter, statusFilter])
+  useEffect(() => { if (profile) { fetchTasks(); fetchProjects() } }, [profile, projectFilter, statusFilter])
 
   const fetchTasks = async () => {
     if (!profile) return
@@ -36,16 +36,23 @@ export default function TasksPage() {
       .order('created_at', { ascending: false })
     if (projectFilter) query = query.eq('project_id', projectFilter)
     if (statusFilter) query = query.eq('status', statusFilter)
-    if (!canManageProjects) query = query.eq('assigned_to', profile.id)
+    if (!canManageProjects) {
+      // Employees see all tasks in their assigned projects
+      const { data: mp } = await supabase.from('project_members').select('project_id').eq('user_id', profile.id)
+      const projectIds = mp?.map(p => p.project_id) || []
+      if (projectIds.length === 0) { setTasks([]); setLoading(false); return }
+      query = query.in('project_id', projectIds)
+    }
     const { data } = await query
     setTasks((data || []) as unknown as Task[])
     setLoading(false)
   }
 
   const fetchProjects = async () => {
+    if (!profile) return
     let query = supabase.from('projects').select('id, name').eq('status', 'active').order('name')
     if (!canManageProjects) {
-      const { data: mp } = await supabase.from('project_members').select('project_id').eq('user_id', profile!.id)
+      const { data: mp } = await supabase.from('project_members').select('project_id').eq('user_id', profile.id)
       const ids = mp?.map(p => p.project_id) || []
       if (ids.length > 0) query = query.in('id', ids)
     }
@@ -54,20 +61,18 @@ export default function TasksPage() {
   }
 
   const fetchProjectMembers = async (projectId: string) => {
-    const { data } = await supabase
-      .from('project_members')
-      .select('user:profiles(id, full_name)')
-      .eq('project_id', projectId)
-    setMembers(
-      ((data as unknown as Array<{ user: Profile | null }>) || [])
-        .map(m => m.user)
-        .filter((u): u is Profile => u !== null)
-    )
+    if (!projectId) { setMembers([]); return }
+    const { data: memberRows } = await supabase.from('project_members').select('user_id').eq('project_id', projectId)
+    const ids = memberRows?.map(m => m.user_id) || []
+    if (ids.length === 0) { setMembers([]); return }
+    const { data } = await supabase.from('profiles').select('id, full_name').in('id', ids)
+    setMembers((data || []) as unknown as Profile[])
   }
 
   const openCreate = () => {
     setEditTask(null)
     setForm({ project_id: '', name: '', description: '', estimated_hours: '', assigned_to: '', due_date: '', status: 'todo' })
+    setMembers([])
     setShowModal(true)
   }
 
@@ -118,7 +123,8 @@ export default function TasksPage() {
   }
 
   const updateStatus = async (id: string, status: Task['status']) => {
-    await supabase.from('tasks').update({ status }).eq('id', id)
+    const { error } = await supabase.from('tasks').update({ status }).eq('id', id)
+    if (error) { toast.error('Failed to update status'); return }
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status } : t))
   }
 
@@ -143,13 +149,13 @@ export default function TasksPage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <div style={{ flex: 1 }}>
-          <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Tasks</h1>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Tasks</h1>
           <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>{filtered.length} task{filtered.length !== 1 ? 's' : ''}</p>
         </div>
-        {canManageProjects && <button className="btn-primary" onClick={openCreate}><Plus size={14} />New Task</button>}
+        {/* All users can create tasks */}
+        <button className="btn-primary" onClick={openCreate}><Plus size={14} />New Task</button>
       </div>
 
-      {/* Filters */}
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, maxWidth: '300px' }}>
           <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--chronos-text-muted)' }} />
@@ -172,14 +178,19 @@ export default function TasksPage() {
           <div style={{ width: '28px', height: '28px', border: '3px solid var(--chronos-border)', borderTopColor: 'var(--chronos-accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
         </div>
       ) : filtered.length === 0 ? (
-        <EmptyState icon={<CheckSquare size={28} />} title="No tasks found" description={canManageProjects ? 'Create tasks to assign to your team.' : 'No tasks assigned to you.'} action={canManageProjects ? <button className="btn-primary" onClick={openCreate}><Plus size={14} />New Task</button> : undefined} />
+        <EmptyState
+          icon={<CheckSquare size={28} />}
+          title="No tasks found"
+          description="Create a task to start tracking work."
+          action={<button className="btn-primary" onClick={openCreate}><Plus size={14} />New Task</button>}
+        />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', alignItems: 'start' }}>
           {(Object.entries(grouped) as [keyof typeof grouped, Task[]][]).map(([status, statusTasks]) => (
             <div key={status} className="card-base" style={{ overflow: 'hidden' }}>
               <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--chronos-border)', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: statusConfig[status].color }} />
-                <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '13px' }}>{statusConfig[status].label}</span>
+                <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '13px' }}>{statusConfig[status].label}</span>
                 <span style={{ marginLeft: 'auto', fontSize: '12px', color: 'var(--chronos-text-muted)', background: 'var(--chronos-surface-2)', padding: '2px 8px', borderRadius: '100px' }}>
                   {statusTasks.length}
                 </span>
@@ -192,7 +203,7 @@ export default function TasksPage() {
                     const proj = task.project as { name: string } | undefined
                     const assignee = task.assignee as { full_name: string } | undefined
                     return (
-                      <div key={task.id} style={{ padding: '12px', borderRadius: '10px', background: 'var(--chronos-surface-2)', border: '1px solid transparent', transition: 'all 0.15s', cursor: 'default' }}
+                      <div key={task.id} style={{ padding: '12px', borderRadius: '10px', background: 'var(--chronos-surface-2)', border: '1px solid transparent', transition: 'all 0.15s' }}
                         onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--chronos-border)'}
                         onMouseLeave={e => e.currentTarget.style.borderColor = 'transparent'}
                       >
@@ -211,7 +222,8 @@ export default function TasksPage() {
                           {task.estimated_hours && <span style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', display: 'flex', alignItems: 'center', gap: '3px' }}><Clock size={9} />{task.estimated_hours}h</span>}
                           {task.due_date && <span style={{ fontSize: '11px', color: 'var(--chronos-text-muted)' }}>{formatDate(task.due_date + 'T00:00:00', 'MMM d')}</span>}
                         </div>
-                        {canManageProjects && status !== 'completed' && (
+                        {/* Status advance buttons — visible to all users */}
+                        {status !== 'completed' && (
                           <div style={{ marginTop: '10px', display: 'flex', gap: '6px' }}>
                             {status === 'todo' && (
                               <button onClick={() => updateStatus(task.id, 'in_progress')} style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '6px', border: '1px solid rgba(96,165,250,0.3)', background: 'rgba(96,165,250,0.08)', color: '#60a5fa', cursor: 'pointer' }}>
@@ -238,13 +250,18 @@ export default function TasksPage() {
       <Modal isOpen={showModal} onClose={() => setShowModal(false)} title={editTask ? 'Edit Task' : 'New Task'}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <FormField label="Project" required>
-            <Select value={form.project_id} onChange={v => { setForm(f => ({ ...f, project_id: v, assigned_to: '' })); fetchProjectMembers(v) }} options={projects.map(p => ({ value: p.id, label: p.name }))} placeholder="Select project" />
+            <Select
+              value={form.project_id}
+              onChange={v => { setForm(f => ({ ...f, project_id: v, assigned_to: '' })); fetchProjectMembers(v) }}
+              options={projects.map(p => ({ value: p.id, label: p.name }))}
+              placeholder="Select project"
+            />
           </FormField>
           <FormField label="Task Name" required>
             <input className="input-base" placeholder="e.g. Design homepage mockup" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
           </FormField>
           <FormField label="Description">
-            <textarea className="input-base" placeholder="Task details..." rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+            <textarea className="input-base" placeholder="Task details..." rows={2} style={{ resize: 'vertical' }} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
           </FormField>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             <FormField label="Estimated Hours">
@@ -259,14 +276,12 @@ export default function TasksPage() {
               <Select value={form.assigned_to} onChange={v => setForm(f => ({ ...f, assigned_to: v }))} options={members.map(m => ({ value: m.id, label: m.full_name }))} placeholder="Select team member" />
             </FormField>
           )}
-          {editTask && (
-            <FormField label="Status">
-              <Select value={form.status} onChange={v => setForm(f => ({ ...f, status: v }))} options={[{ value: 'todo', label: 'To Do' }, { value: 'in_progress', label: 'In Progress' }, { value: 'completed', label: 'Completed' }]} />
-            </FormField>
-          )}
+          <FormField label="Status">
+            <Select value={form.status} onChange={v => setForm(f => ({ ...f, status: v }))} options={[{ value: 'todo', label: 'To Do' }, { value: 'in_progress', label: 'In Progress' }, { value: 'completed', label: 'Completed' }]} />
+          </FormField>
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
             <button className="btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
-            <button className="btn-primary" onClick={handleSave} disabled={saving}>{editTask ? 'Save' : 'Create Task'}</button>
+            <button className="btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : editTask ? 'Save Changes' : 'Create Task'}</button>
           </div>
         </div>
       </Modal>
