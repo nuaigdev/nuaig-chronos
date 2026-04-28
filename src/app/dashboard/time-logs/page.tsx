@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { TimeLog, Project, Task } from '@/types'
@@ -24,10 +24,29 @@ export default function TimeLogsPage() {
   const [showModal, setShowModal] = useState(false)
   const [editLog, setEditLog] = useState<TimeLogWithTimesheet | null>(null)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ project_id: '', task_id: '', log_date: formatDate(new Date(), 'yyyy-MM-dd'), hours: '', description: '' })
+  const [form, setForm] = useState({
+    project_id: '', task_id: '',
+    log_date: formatDate(new Date(), 'yyyy-MM-dd'),
+    hours: '', description: '',
+  })
 
-  const { start: weekStart, end: weekEnd } = getWeekRange(currentWeek)
-  const weekDays = getWeekDays(weekStart)
+  // FIX 1: memoize week boundaries as stable strings.
+  // Previously getWeekRange(currentWeek) was called inline on the component body,
+  // producing new Date objects every render. fetchTimeLogs depended on weekStart/weekEnd
+  // via useCallback, so its reference changed every render, re-triggering the useEffect,
+  // which called fetch, which set state, which caused another render — infinite loop.
+  // Stable ISO strings break the cycle: same string = same reference = no re-fire.
+  const { weekStartStr, weekEndStr } = useMemo(() => {
+    const { start, end } = getWeekRange(currentWeek)
+    return {
+      weekStartStr: format(start, 'yyyy-MM-dd'),
+      weekEndStr: format(end, 'yyyy-MM-dd'),
+    }
+  }, [currentWeek])
+
+  const weekStart = useMemo(() => new Date(weekStartStr + 'T00:00:00'), [weekStartStr])
+  const weekEnd = useMemo(() => new Date(weekEndStr + 'T00:00:00'), [weekEndStr])
+  const weekDays = useMemo(() => getWeekDays(weekStart), [weekStart])
 
   const fetchTimeLogs = useCallback(async () => {
     if (!profile) return
@@ -36,47 +55,75 @@ export default function TimeLogsPage() {
       .from('time_logs')
       .select('*, project:projects(id, name), task:tasks(id, name), timesheet:timesheets(id, status)')
       .eq('user_id', profile.id)
-      .gte('log_date', formatDate(weekStart, 'yyyy-MM-dd'))
-      .lte('log_date', formatDate(weekEnd, 'yyyy-MM-dd'))
+      .gte('log_date', weekStartStr)
+      .lte('log_date', weekEndStr)
       .order('log_date', { ascending: true })
     setTimeLogs((data || []) as unknown as TimeLogWithTimesheet[])
     setLoading(false)
-  }, [profile, weekStart, weekEnd])
+  }, [profile, weekStartStr, weekEndStr])
 
   const fetchProjects = useCallback(async () => {
     if (!profile) return
-    const { data: memberProjs } = await supabase.from('project_members').select('project_id').eq('user_id', profile.id)
+    const { data: memberProjs } = await supabase
+      .from('project_members').select('project_id').eq('user_id', profile.id)
     const ids = memberProjs?.map(p => p.project_id) || []
     if (ids.length === 0) { setProjects([]); return }
-    const { data } = await supabase.from('projects').select('id, name').in('id', ids).eq('status', 'active')
+    const { data } = await supabase
+      .from('projects').select('id, name').in('id', ids).eq('status', 'active')
     setProjects((data || []) as unknown as Project[])
   }, [profile])
 
-  // Gate both effects on profileReady to guarantee profile is non-null
-  // before either fetch runs.
   useEffect(() => {
     if (!profileReady) return
     fetchTimeLogs()
-  }, [profileReady, fetchTimeLogs, currentWeek])
+  }, [profileReady, fetchTimeLogs])
 
   useEffect(() => {
     if (!profileReady) return
     fetchProjects()
   }, [profileReady, fetchProjects])
 
-  useEffect(() => {
-    if (form.project_id) fetchTasks(form.project_id)
-  }, [form.project_id])
-
-  const fetchTasks = async (projectId: string) => {
-    const { data } = await supabase.from('tasks').select('id, name').eq('project_id', projectId).neq('status', 'completed')
+  // FIX 2: separate task fetchers for new-log vs edit mode.
+  // For NEW logs: exclude completed tasks — no point logging time against a finished task.
+  // For EDIT: include all statuses — the existing log may reference a now-completed task
+  // and we need to show its name correctly in the dropdown.
+  const fetchTasksForNew = async (projectId: string) => {
+    if (!projectId) { setTasks([]); return }
+    const { data } = await supabase
+      .from('tasks')
+      .select('id, name')
+      .eq('project_id', projectId)
+      .neq('status', 'completed')
+      .order('name')
     setTasks((data || []) as unknown as Task[])
   }
 
+  const fetchTasksForEdit = async (projectId: string) => {
+    if (!projectId) { setTasks([]); return }
+    const { data } = await supabase
+      .from('tasks')
+      .select('id, name')
+      .eq('project_id', projectId)
+      .order('name')
+    setTasks((data || []) as unknown as Task[])
+  }
+
+  // Only auto-fetch tasks when project changes in new-log mode
+  useEffect(() => {
+    if (!editLog && form.project_id) {
+      fetchTasksForNew(form.project_id)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.project_id, editLog])
+
   const openCreate = () => {
     setEditLog(null)
-    setForm({ project_id: '', task_id: '', log_date: formatDate(new Date(), 'yyyy-MM-dd'), hours: '', description: '' })
     setTasks([])
+    setForm({
+      project_id: '', task_id: '',
+      log_date: formatDate(new Date(), 'yyyy-MM-dd'),
+      hours: '', description: '',
+    })
     setShowModal(true)
   }
 
@@ -94,14 +141,19 @@ export default function TimeLogsPage() {
       hours: log.hours.toString(),
       description: log.description || '',
     })
-    if (log.project_id) fetchTasks(log.project_id)
+    // Fetch ALL task statuses so a completed task name shows in the dropdown
+    if (log.project_id) fetchTasksForEdit(log.project_id)
     setShowModal(true)
   }
 
   const handleSave = async () => {
-    if (!form.project_id || !form.hours || !form.log_date) { toast.error('Please fill in required fields'); return }
+    if (!form.project_id || !form.hours || !form.log_date) {
+      toast.error('Please fill in required fields'); return
+    }
     const hrs = parseFloat(form.hours)
-    if (isNaN(hrs) || hrs <= 0 || hrs > 24) { toast.error('Hours must be between 0.1 and 24'); return }
+    if (isNaN(hrs) || hrs <= 0 || hrs > 24) {
+      toast.error('Hours must be between 0.1 and 24'); return
+    }
 
     setSaving(true)
     try {
@@ -122,7 +174,6 @@ export default function TimeLogsPage() {
         toast.success('Time log updated!')
       } else {
         let timesheetId: string
-        const weekStartStr = formatDate(weekStart, 'yyyy-MM-dd')
         const { data: ts } = await supabase
           .from('timesheets')
           .select('id, status')
@@ -140,7 +191,7 @@ export default function TimeLogsPage() {
           const { data: newTs, error } = await supabase.from('timesheets').insert({
             user_id: profile!.id,
             week_start_date: weekStartStr,
-            week_end_date: formatDate(weekEnd, 'yyyy-MM-dd'),
+            week_end_date: weekEndStr,
             status: 'draft',
           }).select('id').single()
           if (error) throw error
@@ -162,7 +213,12 @@ export default function TimeLogsPage() {
 
       setShowModal(false)
       setEditLog(null)
-      setForm({ project_id: '', task_id: '', log_date: formatDate(new Date(), 'yyyy-MM-dd'), hours: '', description: '' })
+      setTasks([])
+      setForm({
+        project_id: '', task_id: '',
+        log_date: formatDate(new Date(), 'yyyy-MM-dd'),
+        hours: '', description: '',
+      })
       fetchTimeLogs()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Error saving time log')
@@ -184,11 +240,11 @@ export default function TimeLogsPage() {
   }
 
   const totalHours = timeLogs.reduce((s, l) => s + l.hours, 0)
-  const logsByDay = weekDays.reduce((acc, day) => {
+  const logsByDay = useMemo(() => weekDays.reduce((acc, day) => {
     const dateStr = format(day, 'yyyy-MM-dd')
     acc[dateStr] = timeLogs.filter(l => l.log_date === dateStr)
     return acc
-  }, {} as Record<string, TimeLogWithTimesheet[]>)
+  }, {} as Record<string, TimeLogWithTimesheet[]>), [weekDays, timeLogs])
 
   const today = formatDate(new Date(), 'yyyy-MM-dd')
 
@@ -206,7 +262,7 @@ export default function TimeLogsPage() {
 
       {/* Week navigator */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <button className="btn-secondary" style={{ padding: '8px 12px' }} onClick={() => setCurrentWeek(subWeeks(currentWeek, 1))}>
+        <button className="btn-secondary" style={{ padding: '8px 12px' }} onClick={() => setCurrentWeek(w => subWeeks(w, 1))}>
           <ChevronLeft size={14} />
         </button>
         <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
@@ -230,7 +286,7 @@ export default function TimeLogsPage() {
             )
           })}
         </div>
-        <button className="btn-secondary" style={{ padding: '8px 12px' }} onClick={() => setCurrentWeek(addWeeks(currentWeek, 1))}>
+        <button className="btn-secondary" style={{ padding: '8px 12px' }} onClick={() => setCurrentWeek(w => addWeeks(w, 1))}>
           <ChevronRight size={14} />
         </button>
       </div>
@@ -298,7 +354,7 @@ export default function TimeLogsPage() {
         </div>
       )}
 
-      <Modal isOpen={showModal} onClose={() => { setShowModal(false); setEditLog(null) }} title={editLog ? 'Edit Time Log' : 'Log Time'}>
+      <Modal isOpen={showModal} onClose={() => { setShowModal(false); setEditLog(null); setTasks([]) }} title={editLog ? 'Edit Time Log' : 'Log Time'}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <FormField label="Date" required>
             <input type="date" className="input-base" value={form.log_date} onChange={e => setForm(f => ({ ...f, log_date: e.target.value }))} />
@@ -306,14 +362,24 @@ export default function TimeLogsPage() {
           <FormField label="Project" required>
             <Select
               value={form.project_id}
-              onChange={v => { setForm(f => ({ ...f, project_id: v, task_id: '' })); setTasks([]) }}
+              onChange={v => {
+                setForm(f => ({ ...f, project_id: v, task_id: '' }))
+                setTasks([])
+                if (editLog) fetchTasksForEdit(v)
+                else fetchTasksForNew(v)
+              }}
               options={projects.map(p => ({ value: p.id, label: p.name }))}
               placeholder="Select project"
             />
           </FormField>
           {tasks.length > 0 && (
             <FormField label="Task">
-              <Select value={form.task_id} onChange={v => setForm(f => ({ ...f, task_id: v }))} options={tasks.map(t => ({ value: t.id, label: t.name }))} placeholder="Select task (optional)" />
+              <Select
+                value={form.task_id}
+                onChange={v => setForm(f => ({ ...f, task_id: v }))}
+                options={tasks.map(t => ({ value: t.id, label: t.name }))}
+                placeholder="Select task (optional)"
+              />
             </FormField>
           )}
           <FormField label="Hours" required>
@@ -323,7 +389,7 @@ export default function TimeLogsPage() {
             <textarea className="input-base" placeholder="What did you work on?" rows={3} style={{ resize: 'vertical' }} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
           </FormField>
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button className="btn-secondary" onClick={() => { setShowModal(false); setEditLog(null) }}>Cancel</button>
+            <button className="btn-secondary" onClick={() => { setShowModal(false); setEditLog(null); setTasks([]) }}>Cancel</button>
             <button className="btn-primary" onClick={handleSave} disabled={saving}>
               {saving ? 'Saving...' : editLog ? 'Update Log' : 'Log Time'}
             </button>
