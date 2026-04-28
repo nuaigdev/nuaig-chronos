@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
@@ -18,7 +18,7 @@ type EnrichedLog = TimeLog & { userName: string }
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const { profile, canManageProjects } = useAuth()
+  const { profile, profileReady, canManageProjects } = useAuth()
 
   const [project, setProject] = useState<Project | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
@@ -34,10 +34,12 @@ export default function ProjectDetailPage() {
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null)
   const [taskForm, setTaskForm] = useState({ name: '', description: '', estimated_hours: '', assigned_to: '', due_date: '', status: 'todo' })
 
+  // Gate on profileReady so canManageProjects is accurate before fetching
+  // project details and member permissions.
   useEffect(() => {
-    if (!id || !profile) return
+    if (!id || !profileReady || !profile) return
     loadAll()
-  }, [id, profile?.id])
+  }, [id, profileReady, profile?.id])
 
   const loadAll = async () => {
     setLoading(true)

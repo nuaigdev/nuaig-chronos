@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { Task, Project, Profile } from '@/types'
@@ -12,7 +12,7 @@ import toast from 'react-hot-toast'
 const supabase = createClient()
 
 export default function TasksPage() {
-  const { profile, canManageProjects, isAdmin, isManager } = useAuth()
+  const { profile, profileReady, canManageProjects } = useAuth()
   const [tasks, setTasks] = useState<Task[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [members, setMembers] = useState<Profile[]>([])
@@ -27,9 +27,7 @@ export default function TasksPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [form, setForm] = useState({ project_id: '', name: '', description: '', estimated_hours: '', assigned_to: '', due_date: '', status: 'todo' })
 
-  useEffect(() => { if (profile) { fetchTasks(); fetchProjects() } }, [profile?.id, projectFilter, statusFilter])
-
-  const fetchTasks = async () => {
+  const fetchTasks = useCallback(async () => {
     if (!profile) return
     setLoading(true)
     let query = supabase
@@ -48,9 +46,9 @@ export default function TasksPage() {
     const { data } = await query
     setTasks((data || []) as unknown as Task[])
     setLoading(false)
-  }
+  }, [profile, canManageProjects, projectFilter, statusFilter])
 
-  const fetchProjects = async () => {
+  const fetchProjects = useCallback(async () => {
     if (!profile) return
     const { data: mp } = await supabase.from('project_members').select('project_id').eq('user_id', profile.id)
     const myIds = mp?.map(p => p.project_id) || []
@@ -62,7 +60,17 @@ export default function TasksPage() {
     }
     const { data } = await query
     setProjects((data || []) as unknown as Project[])
-  }
+  }, [profile, canManageProjects])
+
+  // Gate on profileReady so canManageProjects is accurate before running
+  // either fetch. The previous pattern `if (profile) { fetchTasks() }` inside
+  // [profile?.id] fired while profile was null, silently bailing and leaving
+  // loading=true forever.
+  useEffect(() => {
+    if (!profileReady) return
+    fetchTasks()
+    fetchProjects()
+  }, [profileReady, fetchTasks, fetchProjects])
 
   const fetchProjectMembers = async (projectId: string) => {
     if (!projectId) { setMembers([]); return }
@@ -141,20 +149,15 @@ export default function TasksPage() {
     }
   }
 
-  // Permission helpers
   const canEditTask = (task: Task) => {
     if (!profile) return false
-    // Admin and manager can always edit
     if (canManageProjects) return true
-    // Employees who are members of the task's project can edit
     return myProjectIds.has(task.project_id)
   }
 
   const canDeleteTask = (task: Task) => {
     if (!profile) return false
-    // Admin and manager can always delete
     if (canManageProjects) return true
-    // Employee who created the task can delete it
     return task.created_by === profile.id
   }
 
@@ -188,7 +191,6 @@ export default function TasksPage() {
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Tasks</h1>
           <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>{filtered.length} task{filtered.length !== 1 ? 's' : ''}</p>
         </div>
-        {/* All users can create tasks */}
         <button className="btn-primary" onClick={openCreate}><Plus size={14} />New Task</button>
       </div>
 
@@ -271,7 +273,6 @@ export default function TasksPage() {
                           {task.estimated_hours && <span style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', display: 'flex', alignItems: 'center', gap: '3px' }}><Clock size={9} />{task.estimated_hours}h</span>}
                           {task.due_date && <span style={{ fontSize: '11px', color: 'var(--chronos-text-muted)' }}>{formatDate(task.due_date + 'T00:00:00', 'MMM d')}</span>}
                         </div>
-                        {/* Status advance buttons — visible to all users */}
                         {status !== 'completed' && (
                           <div style={{ marginTop: '10px', display: 'flex', gap: '6px' }}>
                             {status === 'todo' && (

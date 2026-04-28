@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { Timesheet, Profile, TimeLog } from '@/types'
@@ -14,7 +14,7 @@ const supabase = createClient()
 type TimesheetWithUser = Timesheet & { user: Profile }
 
 export default function ApprovalsPage() {
-  const { profile, canManageProjects } = useAuth()
+  const { profile, profileReady, canManageProjects } = useAuth()
   const [timesheets, setTimesheets] = useState<TimesheetWithUser[]>([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -24,9 +24,7 @@ export default function ApprovalsPage() {
   const [comment, setComment] = useState('')
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { fetchTimesheets() }, [statusFilter, profile?.id])
-
-  const fetchTimesheets = async () => {
+  const fetchTimesheets = useCallback(async () => {
     if (!profile || !canManageProjects) return
     setLoading(true)
     let query = supabase
@@ -37,7 +35,16 @@ export default function ApprovalsPage() {
     const { data } = await query
     setTimesheets((data || []) as unknown as TimesheetWithUser[])
     setLoading(false)
-  }
+  }, [profile, canManageProjects, statusFilter])
+
+  // Gate on profileReady so canManageProjects is accurate before we decide
+  // whether to fetch or show empty. Previously this used [profile?.id] which
+  // fired while profile was still null, causing fetchTimesheets to bail early
+  // and leave loading=true forever for managers and admins.
+  useEffect(() => {
+    if (!profileReady) return
+    fetchTimesheets()
+  }, [profileReady, fetchTimesheets])
 
   const fetchLogs = async (timesheetId: string) => {
     if (logs[timesheetId]) return

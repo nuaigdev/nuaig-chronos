@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { TimeLog, Project, Task } from '@/types'
@@ -15,7 +15,7 @@ const supabase = createClient()
 type TimeLogWithTimesheet = TimeLog & { timesheet?: { id: string; status: string } | null }
 
 export default function TimeLogsPage() {
-  const { profile } = useAuth()
+  const { profile, profileReady } = useAuth()
   const [currentWeek, setCurrentWeek] = useState(new Date())
   const [timeLogs, setTimeLogs] = useState<TimeLogWithTimesheet[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -29,11 +29,7 @@ export default function TimeLogsPage() {
   const { start: weekStart, end: weekEnd } = getWeekRange(currentWeek)
   const weekDays = getWeekDays(weekStart)
 
-  useEffect(() => { fetchTimeLogs() }, [currentWeek, profile?.id])
-  useEffect(() => { fetchProjects() }, [profile?.id])
-  useEffect(() => { if (form.project_id) fetchTasks(form.project_id) }, [form.project_id])
-
-  const fetchTimeLogs = async () => {
+  const fetchTimeLogs = useCallback(async () => {
     if (!profile) return
     setLoading(true)
     const { data } = await supabase
@@ -45,16 +41,32 @@ export default function TimeLogsPage() {
       .order('log_date', { ascending: true })
     setTimeLogs((data || []) as unknown as TimeLogWithTimesheet[])
     setLoading(false)
-  }
+  }, [profile, weekStart, weekEnd])
 
-  const fetchProjects = async () => {
+  const fetchProjects = useCallback(async () => {
     if (!profile) return
     const { data: memberProjs } = await supabase.from('project_members').select('project_id').eq('user_id', profile.id)
     const ids = memberProjs?.map(p => p.project_id) || []
     if (ids.length === 0) { setProjects([]); return }
     const { data } = await supabase.from('projects').select('id, name').in('id', ids).eq('status', 'active')
     setProjects((data || []) as unknown as Project[])
-  }
+  }, [profile])
+
+  // Gate both effects on profileReady to guarantee profile is non-null
+  // before either fetch runs.
+  useEffect(() => {
+    if (!profileReady) return
+    fetchTimeLogs()
+  }, [profileReady, fetchTimeLogs, currentWeek])
+
+  useEffect(() => {
+    if (!profileReady) return
+    fetchProjects()
+  }, [profileReady, fetchProjects])
+
+  useEffect(() => {
+    if (form.project_id) fetchTasks(form.project_id)
+  }, [form.project_id])
 
   const fetchTasks = async (projectId: string) => {
     const { data } = await supabase.from('tasks').select('id, name').eq('project_id', projectId).neq('status', 'completed')
@@ -94,7 +106,6 @@ export default function TimeLogsPage() {
     setSaving(true)
     try {
       if (editLog) {
-        // Guard again in save (in case state changed)
         const ts = editLog.timesheet
         if (ts?.status === 'submitted' || ts?.status === 'approved') {
           toast.error('Cannot modify a submitted or approved timesheet')
@@ -110,7 +121,6 @@ export default function TimeLogsPage() {
         if (error) throw error
         toast.success('Time log updated!')
       } else {
-        // Get or create timesheet for this week
         let timesheetId: string
         const weekStartStr = formatDate(weekStart, 'yyyy-MM-dd')
         const { data: ts } = await supabase

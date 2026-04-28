@@ -83,7 +83,7 @@ function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: s
 }
 
 export default function ReportsPage() {
-  const { profile, canManageProjects } = useAuth()
+  const { profile, profileReady, canManageProjects } = useAuth()
   const [tab, setTab] = useState<Tab>('overview')
   const [period, setPeriod] = useState<Period>('month')
   const [loading, setLoading] = useState(true)
@@ -97,6 +97,7 @@ export default function ReportsPage() {
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
+    // profileReady guarantees profile is non-null with the correct role
     if (!profile) return
     setLoading(true)
     try {
@@ -232,9 +233,11 @@ export default function ReportsPage() {
     } finally {
       setLoading(false)
     }
-  }, [profile?.id, period, canManageProjects])
+  }, [profileReady, profile?.id, period, canManageProjects])
 
-  useEffect(() => { fetchData() }, [fetchData])
+  // fetchData already guards on profile being non-null, but we also depend
+  // on profileReady so the useCallback recomputes once role is known.
+  useEffect(() => { if (profileReady) fetchData() }, [profileReady, fetchData])
 
   const totalHours = enrichedLogs.reduce((s, l) => s + l.hours, 0)
   const uniqueProjectCount = Object.keys(enrichedLogs.reduce((m, l) => { m[l.project_id] = true; return m }, {} as Record<string, true>)).length

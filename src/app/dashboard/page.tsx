@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { StatCard, StatusBadge, ProgressBar, SectionHeader } from '@/components/ui'
 import { formatHours, formatDate, getWeekRange, calculateCompletionPercentage } from '@/utils'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts'
-import { Clock, FolderKanban, CheckSquare, Users, TrendingUp, Calendar, AlertCircle } from 'lucide-react'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { Clock, FolderKanban, CheckSquare, Calendar, AlertCircle } from 'lucide-react'
 import Link from 'next/link'
 
 const supabase = createClient()
@@ -23,15 +23,17 @@ interface DashboardStats {
 }
 
 export default function DashboardPage() {
-  const { profile, isAdmin, isManager, canManageProjects } = useAuth()
+  // Use profileReady — the authoritative signal that BOTH session and profile
+  // row are available. Never gate fetches on profile?.id alone because that
+  // can be non-null while the role fields are still resolving, which causes
+  // incorrect canManageProjects=false on the first render for admins/managers.
+  const { profile, profileReady, canManageProjects } = useAuth()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    fetchStats()
-  }, [profile?.id])
-
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
+    // profileReady guarantees profile is non-null here — this guard is a
+    // runtime safety net only, it should never fire in practice.
     if (!profile) return
     setLoading(true)
 
@@ -52,60 +54,59 @@ export default function DashboardPage() {
       const hoursToday = todayLogs.reduce((s, l) => s + l.hours, 0)
       const totalHoursThisWeek = weekLogs?.reduce((s, l) => s + l.hours, 0) || 0
 
-      // Active projects
-      let projectsQuery = supabase
-        .from('projects')
-        .select(`*, client:clients(name), time_logs(hours)`)
-        .eq('status', 'active')
+      // Active projects — run in parallel with admin queries below
+      const projectsPromise = (async () => {
+        let projectsQuery = supabase
+          .from('projects')
+          .select(`*, client:clients(name), time_logs(hours)`)
+          .eq('status', 'active')
 
-      if (!canManageProjects) {
-        const { data: memberProjs } = await supabase
-          .from('project_members')
-          .select('project_id')
-          .eq('user_id', profile.id)
-        const projIds = memberProjs?.map(p => p.project_id) || []
-        if (projIds.length > 0) projectsQuery = projectsQuery.in('id', projIds)
-      }
+        if (!canManageProjects) {
+          const { data: memberProjs } = await supabase
+            .from('project_members')
+            .select('project_id')
+            .eq('user_id', profile.id)
+          const projIds = memberProjs?.map(p => p.project_id) || []
+          if (projIds.length > 0) projectsQuery = projectsQuery.in('id', projIds)
+          else return []
+        }
 
-      const { data: projects } = await projectsQuery.limit(5)
+        const { data: projects } = await projectsQuery.limit(5)
+        return (projects || []).map(p => ({
+          id: p.id,
+          name: p.name,
+          client_name: (p.client as { name: string } | null)?.name || 'No Client',
+          logged: (p.time_logs as { hours: number }[])?.reduce((s: number, l: { hours: number }) => s + l.hours, 0) || 0,
+          estimated: p.estimated_hours || 0,
+          status: p.status,
+        }))
+      })()
 
-      const activeProjects = (projects || []).map(p => ({
-        id: p.id,
-        name: p.name,
-        client_name: (p.client as { name: string } | null)?.name || 'No Client',
-        logged: (p.time_logs as { hours: number }[])?.reduce((s: number, l: { hours: number }) => s + l.hours, 0) || 0,
-        estimated: p.estimated_hours || 0,
-        status: p.status,
-      }))
+      // Admin / manager exclusive queries — run concurrently so the extra
+      // latency doesn't block the spinner from clearing.
+      const teamSizePromise = canManageProjects
+        ? supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('is_active', true)
+        : Promise.resolve({ count: 0 })
 
-      // Team size (if manager/admin)
-      let teamSize = 0
-      if (canManageProjects) {
-        const { count } = await supabase
-          .from('profiles')
-          .select('*', { count: 'exact', head: true })
-          .eq('is_active', true)
-        teamSize = count || 0
-      }
+      const pendingApprovalsPromise = canManageProjects
+        ? supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'submitted')
+        : Promise.resolve({ count: 0 })
 
-      // Pending timesheets (for approval)
-      let pendingApprovals = 0
-      if (canManageProjects) {
-        const { count } = await supabase
-          .from('timesheets')
-          .select('*', { count: 'exact', head: true })
-          .eq('status', 'submitted')
-        pendingApprovals = count || 0
-      }
-
-      // Pending timesheets (own)
-      const { count: pendingCount } = await supabase
+      const pendingOwnPromise = supabase
         .from('timesheets')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', profile.id)
         .eq('status', 'draft')
 
-      // Chart data - last 7 days
+      // Await all in parallel
+      const [activeProjects, teamRes, approvalsRes, ownRes] = await Promise.all([
+        projectsPromise,
+        teamSizePromise,
+        pendingApprovalsPromise,
+        pendingOwnPromise,
+      ])
+
+      // Chart data — last 7 days derived from already-fetched weekLogs
       const last7 = Array.from({ length: 7 }, (_, i) => {
         const d = new Date()
         d.setDate(d.getDate() - (6 - i))
@@ -113,23 +114,32 @@ export default function DashboardPage() {
       })
       const recentTimeLogs = last7.map(date => ({
         date: formatDate(new Date(date + 'T00:00:00'), 'EEE'),
-        hours: weekLogs?.filter(l => l.log_date === date).reduce((s, l) => s + l.hours, 0) || 0
+        hours: weekLogs?.filter(l => l.log_date === date).reduce((s, l) => s + l.hours, 0) || 0,
       }))
 
       setStats({
         totalHoursThisWeek,
         totalProjectsActive: activeProjects.length,
-        pendingTimesheets: pendingCount || 0,
-        teamSize,
+        pendingTimesheets: ownRes.count || 0,
+        teamSize: teamRes.count || 0,
         recentTimeLogs,
         activeProjects,
-        pendingApprovals,
+        pendingApprovals: approvalsRes.count || 0,
         hoursToday,
       })
     } finally {
       setLoading(false)
     }
-  }
+  }, [profile, canManageProjects])
+
+  // Gate on profileReady — this fires only once the profile row (including the
+  // role) has been fetched. Previously this used [profile?.id] which could fire
+  // while profile was still null (race condition) causing an early return and
+  // the loading spinner never clearing for admins and managers.
+  useEffect(() => {
+    if (!profileReady) return
+    fetchStats()
+  }, [profileReady, fetchStats])
 
   const greeting = () => {
     const h = new Date().getHours()

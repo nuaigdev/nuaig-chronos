@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { Project, Profile } from '@/types'
@@ -13,7 +13,7 @@ import toast from 'react-hot-toast'
 const supabase = createClient()
 
 export default function ProjectsPage() {
-  const { profile, canManageProjects, isAdmin } = useAuth()
+  const { profile, profileReady, canManageProjects, isAdmin } = useAuth()
   const [projects, setProjects] = useState<Project[]>([])
   const [clients, setClients] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(true)
@@ -35,11 +35,14 @@ export default function ProjectsPage() {
   const [memberToAdd, setMemberToAdd] = useState('')
   const [loadingMembers, setLoadingMembers] = useState(false)
 
+  // Gate on profileReady so canManageProjects is accurate before fetching.
+  // Previously [profile?.id] fired while profile was null, causing an early
+  // return and an infinite loading spinner for managers and admins.
   useEffect(() => {
-    if (!profile) return
+    if (!profileReady || !profile) return
     fetchProjects(profile.id, canManageProjects)
     fetchClients()
-  }, [statusFilter, profile?.id, canManageProjects])
+  }, [profileReady, statusFilter, profile?.id, canManageProjects])
 
   const fetchProjects = async (profileId: string, canManage: boolean) => {
     setLoading(true)

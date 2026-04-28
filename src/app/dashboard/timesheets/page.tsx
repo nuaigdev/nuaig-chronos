@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { Timesheet, TimeLog } from '@/types'
@@ -13,26 +13,14 @@ import toast from 'react-hot-toast'
 const supabase = createClient()
 
 export default function TimesheetsPage() {
-  const { profile, canManageProjects } = useAuth()
+  const { profile, profileReady, canManageProjects } = useAuth()
   const [timesheets, setTimesheets] = useState<Timesheet[]>([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [logs, setLogs] = useState<Record<string, TimeLog[]>>({})
   const [checkingMissed, setCheckingMissed] = useState(false)
 
-  useEffect(() => { fetchTimesheets() }, [profile?.id])
-
-  // Auto-check for missed timesheets on Monday (once per day, manager only)
-  useEffect(() => {
-    if (!profile || !canManageProjects) return
-    if (new Date().getDay() !== 1) return // Only on Monday
-    const key = `missed_check_${profile.id}`
-    const todayStr = format(new Date(), 'yyyy-MM-dd')
-    if (localStorage.getItem(key) === todayStr) return
-    checkMissedTimesheets(true).then(() => localStorage.setItem(key, todayStr))
-  }, [profile?.id, canManageProjects])
-
-  const fetchTimesheets = async () => {
+  const fetchTimesheets = useCallback(async () => {
     if (!profile) return
     setLoading(true)
     const { data } = await supabase
@@ -42,7 +30,27 @@ export default function TimesheetsPage() {
       .order('week_start_date', { ascending: false })
     setTimesheets((data || []) as unknown as Timesheet[])
     setLoading(false)
-  }
+  }, [profile])
+
+  // Gate on profileReady so we have the profile row (incl. role) before
+  // deciding what to fetch. Previously [profile?.id] fired while profile
+  // was null, causing fetchTimesheets to bail and leave loading=true.
+  useEffect(() => {
+    if (!profileReady) return
+    fetchTimesheets()
+  }, [profileReady, fetchTimesheets])
+
+  // Auto-check for missed timesheets on Monday (once per day, manager only).
+  // Also gated on profileReady so canManageProjects is accurate.
+  useEffect(() => {
+    if (!profileReady || !profile || !canManageProjects) return
+    if (new Date().getDay() !== 1) return // Only on Monday
+    const key = `missed_check_${profile.id}`
+    const todayStr = format(new Date(), 'yyyy-MM-dd')
+    if (localStorage.getItem(key) === todayStr) return
+    checkMissedTimesheets(true).then(() => localStorage.setItem(key, todayStr))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileReady])
 
   const fetchLogs = async (timesheetId: string) => {
     if (logs[timesheetId]) return
