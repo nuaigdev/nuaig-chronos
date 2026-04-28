@@ -129,8 +129,18 @@ export default function ProjectsPage() {
         if (error) throw error
         toast.success('Project updated!')
       } else {
-        const { error } = await supabase.from('projects').insert({ ...payload, created_by: profile!.id })
+        const { data: newProject, error } = await supabase
+          .from('projects')
+          .insert({ ...payload, created_by: profile!.id })
+          .select('id')
+          .single()
         if (error) throw error
+        // Auto-add creator as a member
+        await supabase.from('project_members').insert({
+          project_id: newProject.id,
+          user_id: profile!.id,
+          assigned_by: profile!.id,
+        })
         toast.success('Project created!')
       }
       setShowModal(false)
