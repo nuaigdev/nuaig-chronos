@@ -35,7 +35,7 @@ export default function ProjectsPage() {
 
     let query = supabase
       .from('projects')
-      .select(`*, client:clients(id, name), project_members(user_id, user:profiles(full_name, avatar_url))`)
+      .select(`*, client:clients(id, name), project_members(user_id)`)
       .order('created_at', { ascending: false })
 
     if (statusFilter !== 'all') query = query.eq('status', statusFilter)
@@ -47,8 +47,35 @@ export default function ProjectsPage() {
       else { setProjects([]); setLoading(false); return }
     }
 
-    const { data } = await query
-    setProjects((data || []) as unknown as Project[])
+    const { data, error } = await query
+    if (error) { toast.error('Failed to load projects'); setLoading(false); return }
+
+    const projectData = (data || []) as unknown as Array<Project & { project_members: { user_id: string }[] }>
+
+    // Batch-fetch member profiles separately (no direct FK from project_members to profiles)
+    const seen = new Set<string>()
+    const allUserIds: string[] = []
+    for (const p of projectData) for (const m of (p.project_members || [])) { if (!seen.has(m.user_id)) { seen.add(m.user_id); allUserIds.push(m.user_id) } }
+    const profileMap: Record<string, { full_name: string; avatar_url: string | null }> = {}
+    if (allUserIds.length > 0) {
+      const { data: memberProfiles } = await supabase
+        .from('profiles')
+        .select('id, full_name, avatar_url')
+        .in('id', allUserIds)
+      for (const p of (memberProfiles || [])) {
+        profileMap[p.id] = { full_name: p.full_name as string, avatar_url: p.avatar_url as string | null }
+      }
+    }
+
+    const enriched = projectData.map(p => ({
+      ...p,
+      project_members: (p.project_members || []).map(m => ({
+        ...m,
+        user: profileMap[m.user_id] ?? { full_name: 'Unknown', avatar_url: null },
+      })),
+    }))
+
+    setProjects(enriched as unknown as Project[])
     setLoading(false)
   }
 
