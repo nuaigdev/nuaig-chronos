@@ -9,8 +9,6 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const [mode, setMode] = useState<'login' | 'signup'>('login')
-  const [fullName, setFullName] = useState('')
   const supabase = createClient()
   const router = useRouter()
 
@@ -19,27 +17,19 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      if (mode === 'login') {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-        if (error) {
-          if (error.message?.toLowerCase().includes('database') || error.status === 500) {
-            throw new Error('A server error occurred. Please try again in a moment.')
-          }
-          throw error
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) {
+        if (error.message?.toLowerCase().includes('database') || error.status === 500) {
+          throw new Error('A server error occurred. Please try again in a moment.')
         }
-        if (data?.user) {
-          router.push('/dashboard')
-          router.refresh()
+        if (error.message?.toLowerCase().includes('invalid login')) {
+          throw new Error('Invalid email or password. Contact your admin if you need access.')
         }
-      } else {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { data: { full_name: fullName } }
-        })
-        if (error) throw error
-        toast.success('Account created! Please check your email to verify.')
-        setMode('login')
+        throw error
+      }
+      if (data?.user) {
+        router.push('/dashboard')
+        router.refresh()
       }
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'An error occurred')
@@ -48,39 +38,27 @@ export default function LoginPage() {
     }
   }
 
-  const features = [
+  const steps = [
     {
-      icon: (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
-        </svg>
-      ),
-      title: 'Intelligent Time Tracking',
-      desc: 'Log hours with full project and task context',
+      number: '1',
+      title: 'Get your credentials',
+      desc: 'Your admin will create your account and send your login email and temporary password.',
     },
     {
-      icon: (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" />
-        </svg>
-      ),
-      title: 'Real-time Analytics',
-      desc: 'Visual dashboards and team productivity insights',
+      number: '2',
+      title: 'Sign in below',
+      desc: 'Enter the email and password you received. If you have issues, contact your administrator — self-registration is disabled.',
     },
     {
-      icon: (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-        </svg>
-      ),
-      title: 'Approval Workflows',
-      desc: 'Seamless timesheet review and sign-off process',
+      number: '3',
+      title: 'Log your time',
+      desc: 'Head to Timesheets → create your weekly timesheet → add time entries per project and task.',
     },
   ]
 
   return (
     <div className="min-h-screen flex" style={{ background: 'var(--chronos-bg)' }}>
-      {/* Left brand panel */}
+      {/* Left info panel */}
       <div
         className="hidden lg:flex flex-col"
         style={{
@@ -143,35 +121,47 @@ export default function LoginPage() {
               borderRadius: '100px', padding: '5px 14px', width: 'fit-content', marginBottom: '24px',
             }}>
               <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#3b82f6', boxShadow: '0 0 8px rgba(59,130,246,0.7)' }} />
-              <span style={{ fontSize: '12px', color: 'var(--chronos-accent)', fontWeight: 500, letterSpacing: '0.02em' }}>Time Intelligence Platform</span>
+              <span style={{ fontSize: '12px', color: 'var(--chronos-accent)', fontWeight: 500, letterSpacing: '0.02em' }}>Internal Tool — Staff Only</span>
             </div>
 
             <h2 style={{
-              fontFamily: 'var(--font-display)', fontSize: '42px', fontWeight: 800,
-              lineHeight: 1.1, letterSpacing: '-0.04em', marginBottom: '20px',
+              fontFamily: 'var(--font-display)', fontSize: '38px', fontWeight: 800,
+              lineHeight: 1.1, letterSpacing: '-0.04em', marginBottom: '16px',
             }}>
-              Work smarter,<br />
-              <span className="gradient-text">track better.</span>
+              NuAIg Internal<br />
+              <span className="gradient-text">Time Tracker</span>
             </h2>
 
-            <p style={{ fontSize: '15px', color: 'var(--chronos-text-muted)', lineHeight: 1.75, marginBottom: '44px', maxWidth: '360px' }}>
-              Streamline time tracking, project management, and workforce analytics — unified in one platform built for modern teams.
+            <p style={{ fontSize: '14px', color: 'var(--chronos-text-muted)', lineHeight: 1.7, marginBottom: '40px', maxWidth: '360px' }}>
+              This is an internal tool for NuAIg staff. Only authorised employees with admin-provisioned accounts can sign in. If you need access, contact your manager.
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {features.map((f, i) => (
-                <div key={i} style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
+            {/* How-to steps */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+              <p style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', color: 'var(--chronos-text-muted)', textTransform: 'uppercase', marginBottom: '18px' }}>
+                How to get started
+              </p>
+              {steps.map((s, i) => (
+                <div key={i} style={{ display: 'flex', gap: '16px', alignItems: 'flex-start', position: 'relative', paddingBottom: i < steps.length - 1 ? '24px' : '0' }}>
+                  {/* Connector line */}
+                  {i < steps.length - 1 && (
+                    <div style={{
+                      position: 'absolute', left: '15px', top: '30px', bottom: '0',
+                      width: '1px', background: 'rgba(255,255,255,0.07)',
+                    }} />
+                  )}
                   <div style={{
-                    width: '40px', height: '40px', borderRadius: '11px', flexShrink: 0,
+                    width: '30px', height: '30px', borderRadius: '8px', flexShrink: 0,
                     background: 'var(--chronos-surface-2)', border: '1px solid var(--chronos-border)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '13px',
                     color: 'var(--chronos-accent)',
                   }}>
-                    {f.icon}
+                    {s.number}
                   </div>
                   <div>
-                    <p style={{ fontWeight: 600, fontSize: '14px', color: 'var(--chronos-text)', marginBottom: '3px' }}>{f.title}</p>
-                    <p style={{ fontSize: '13px', color: 'var(--chronos-text-muted)', lineHeight: 1.5 }}>{f.desc}</p>
+                    <p style={{ fontWeight: 600, fontSize: '13px', color: 'var(--chronos-text)', marginBottom: '3px' }}>{s.title}</p>
+                    <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', lineHeight: 1.6 }}>{s.desc}</p>
                   </div>
                 </div>
               ))}
@@ -179,14 +169,14 @@ export default function LoginPage() {
           </div>
 
           <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', letterSpacing: '0.01em' }}>
-            © {new Date().getFullYear()} NuAIg Technologies. All rights reserved.
+            © {new Date().getFullYear()} NuAIg Technologies. Internal use only.
           </p>
         </div>
       </div>
 
       {/* Right form panel */}
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 32px' }}>
-        <div style={{ width: '100%', maxWidth: '400px' }} className="animate-fade-in">
+        <div style={{ width: '100%', maxWidth: '380px' }} className="animate-fade-in">
           {/* Mobile logo */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '36px', justifyContent: 'center' }} className="lg:hidden">
             <div style={{
@@ -204,54 +194,46 @@ export default function LoginPage() {
             </span>
           </div>
 
+          {/* Mobile steps (collapsed info) */}
+          <div className="lg:hidden" style={{
+            marginBottom: '28px', padding: '14px 16px', borderRadius: '12px',
+            background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)',
+          }}>
+            <p style={{ fontSize: '12px', color: 'var(--chronos-accent)', fontWeight: 600, marginBottom: '6px' }}>Internal staff tool</p>
+            <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', lineHeight: 1.6 }}>
+              Sign in with the credentials your admin provided. New accounts must be set up by your administrator — self-registration is not available.
+            </p>
+          </div>
+
           {/* Heading */}
-          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '28px', fontWeight: 800, letterSpacing: '-0.04em', marginBottom: '8px' }}>
-            {mode === 'login' ? 'Welcome back' : 'Create your account'}
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '26px', fontWeight: 800, letterSpacing: '-0.04em', marginBottom: '6px' }}>
+            Sign in
           </h1>
-          <p style={{ color: 'var(--chronos-text-muted)', fontSize: '14px', marginBottom: '36px', lineHeight: 1.6 }}>
-            {mode === 'login'
-              ? 'Enter your credentials to access your workspace.'
-              : 'Fill in the details below to join your team on Chronos.'}
+          <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginBottom: '32px', lineHeight: 1.6 }}>
+            Use your NuAIg work email and the password your admin provided.
           </p>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {mode === 'signup' && (
-              <div>
-                <label style={{ fontSize: '13px', fontWeight: 500, color: 'var(--chronos-text-subtle)', display: 'block', marginBottom: '8px' }}>
-                  Full Name
-                </label>
-                <input
-                  type="text"
-                  className="input-base"
-                  placeholder="John Doe"
-                  value={fullName}
-                  onChange={e => setFullName(e.target.value)}
-                  required
-                />
-              </div>
-            )}
-
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
             <div>
               <label style={{ fontSize: '13px', fontWeight: 500, color: 'var(--chronos-text-subtle)', display: 'block', marginBottom: '8px' }}>
-                Email address
+                Work email
               </label>
               <input
                 type="email"
                 className="input-base"
-                placeholder="you@company.com"
+                placeholder="you@nuaig.com"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 required
+                autoComplete="username"
               />
             </div>
 
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <label style={{ fontSize: '13px', fontWeight: 500, color: 'var(--chronos-text-subtle)' }}>
-                  Password
-                </label>
-              </div>
+              <label style={{ fontSize: '13px', fontWeight: 500, color: 'var(--chronos-text-subtle)', display: 'block', marginBottom: '8px' }}>
+                Password
+              </label>
               <input
                 type="password"
                 className="input-base"
@@ -260,6 +242,7 @@ export default function LoginPage() {
                 onChange={e => setPassword(e.target.value)}
                 required
                 minLength={8}
+                autoComplete="current-password"
               />
             </div>
 
@@ -275,30 +258,20 @@ export default function LoginPage() {
                   <path d="M12 3a9 9 0 019 9" />
                 </svg>
               )}
-              {loading ? 'Please wait...' : mode === 'login' ? 'Sign in to workspace' : 'Create Account'}
+              {loading ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
 
-          {/* Divider */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', margin: '28px 0' }}>
-            <div style={{ flex: 1, height: '1px', background: 'var(--chronos-border)' }} />
-            <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>or</span>
-            <div style={{ flex: 1, height: '1px', background: 'var(--chronos-border)' }} />
+          {/* Help note */}
+          <div style={{
+            marginTop: '28px', padding: '14px 16px', borderRadius: '10px',
+            background: 'var(--chronos-surface)', border: '1px solid var(--chronos-border)',
+          }}>
+            <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', lineHeight: 1.7 }}>
+              <strong style={{ color: 'var(--chronos-text)', fontWeight: 600 }}>Can&apos;t sign in?</strong><br />
+              Contact your manager or admin to reset your password or create an account. Accounts cannot be self-registered.
+            </p>
           </div>
-
-          {/* Mode toggle */}
-          <p style={{ textAlign: 'center', fontSize: '14px', color: 'var(--chronos-text-muted)' }}>
-            {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
-            <button
-              onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
-              style={{
-                color: 'var(--chronos-accent)', background: 'none', border: 'none',
-                cursor: 'pointer', fontWeight: 600, fontFamily: 'inherit', fontSize: 'inherit',
-              }}
-            >
-              {mode === 'login' ? 'Sign up' : 'Sign in'}
-            </button>
-          </p>
         </div>
       </div>
     </div>

@@ -6,7 +6,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { Project, Profile } from '@/types'
 import { StatusBadge, EmptyState, Modal, FormField, Select, ProgressBar } from '@/components/ui'
 import { formatDate, formatHours, getInitials } from '@/utils'
-import { FolderKanban, Plus, Search, Archive, Edit2, Clock, Users, UserPlus, X } from 'lucide-react'
+import { FolderKanban, Plus, Search, Archive, Edit2, Clock, Users, UserPlus, X, Trash2 } from 'lucide-react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 
@@ -23,6 +23,7 @@ export default function ProjectsPage() {
   const [editProject, setEditProject] = useState<Project | null>(null)
   const [form, setForm] = useState({ name: '', description: '', client_id: '', start_date: '', end_date: '', estimated_hours: '', budget: '' })
   const [saving, setSaving] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // Member management
   const [showMembersModal, setShowMembersModal] = useState(false)
@@ -157,6 +158,21 @@ export default function ProjectsPage() {
     await supabase.from('projects').update({ status: 'archived' }).eq('id', id)
     toast.success('Project archived')
     if (profile) fetchProjects(profile.id, canManageProjects)
+  }
+
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`Delete project "${name}"? This will also delete all associated tasks. This cannot be undone.`)) return
+    setDeletingId(id)
+    try {
+      const { error } = await supabase.from('projects').delete().eq('id', id)
+      if (error) throw error
+      toast.success('Project deleted')
+      if (profile) fetchProjects(profile.id, canManageProjects)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete project')
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   // ── Member management ──────────────────────────────────────
@@ -312,6 +328,14 @@ export default function ProjectsPage() {
                             onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
                           ><Archive size={13} /></button>
                         )}
+                        <button
+                          onClick={() => handleDelete(p.id, p.name)}
+                          disabled={deletingId === p.id}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px', borderRadius: '6px' }}
+                          onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-danger, #ef4444)'}
+                          onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                          title="Delete project"
+                        ><Trash2 size={13} /></button>
                       </div>
                     )}
                   </div>

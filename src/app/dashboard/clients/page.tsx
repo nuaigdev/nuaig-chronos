@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { Client } from '@/types'
 import { EmptyState, Modal, FormField, SectionHeader } from '@/components/ui'
-import { Building2, Plus, Search, Edit2, Globe, Phone, Mail, ToggleLeft } from 'lucide-react'
+import { Building2, Plus, Search, Edit2, Globe, Phone, Mail, ToggleLeft, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const supabase = createClient()
@@ -18,6 +18,7 @@ export default function ClientsPage() {
   const [showModal, setShowModal] = useState(false)
   const [editClient, setEditClient] = useState<Client | null>(null)
   const [saving, setSaving] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', email: '', phone: '', address: '', website: '', industry: '', notes: '' })
 
   useEffect(() => { fetchClients() }, [])
@@ -60,6 +61,21 @@ export default function ClientsPage() {
       toast.error(err instanceof Error ? err.message : 'Error')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleDelete = async (c: Client) => {
+    if (!confirm(`Delete client "${c.name}"? This cannot be undone.`)) return
+    setDeletingId(c.id)
+    try {
+      const { error } = await supabase.from('clients').delete().eq('id', c.id)
+      if (error) throw error
+      toast.success('Client deleted')
+      fetchClients()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete client')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -110,15 +126,29 @@ export default function ClientsPage() {
                     {c.industry && <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{c.industry}</div>}
                   </div>
                 </div>
+                {/* Edit / Delete — admin & manager only */}
                 {canManageProjects && (
                   <div style={{ display: 'flex', gap: '4px' }}>
-                    <button onClick={() => openEdit(c)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px' }}
+                    <button
+                      onClick={() => openEdit(c)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px' }}
                       onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-text)'}
                       onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                      title="Edit client"
                     ><Edit2 size={13} /></button>
-                    <button onClick={() => toggleActive(c.id, c.is_active)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: c.is_active ? 'var(--chronos-success)' : 'var(--chronos-text-muted)', padding: '4px' }} title={c.is_active ? 'Deactivate' : 'Activate'}>
-                      <ToggleLeft size={13} />
-                    </button>
+                    <button
+                      onClick={() => toggleActive(c.id, c.is_active)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: c.is_active ? 'var(--chronos-success)' : 'var(--chronos-text-muted)', padding: '4px' }}
+                      title={c.is_active ? 'Deactivate' : 'Activate'}
+                    ><ToggleLeft size={13} /></button>
+                    <button
+                      onClick={() => handleDelete(c)}
+                      disabled={deletingId === c.id}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px' }}
+                      onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-danger, #ef4444)'}
+                      onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                      title="Delete client"
+                    ><Trash2 size={13} /></button>
                   </div>
                 )}
               </div>

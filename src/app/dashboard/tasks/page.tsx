@@ -6,16 +6,17 @@ import { useAuth } from '@/hooks/useAuth'
 import { Task, Project, Profile } from '@/types'
 import { EmptyState, Modal, FormField, Select } from '@/components/ui'
 import { formatDate } from '@/utils'
-import { CheckSquare, Plus, Search, Edit2, Clock } from 'lucide-react'
+import { CheckSquare, Plus, Search, Edit2, Clock, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const supabase = createClient()
 
 export default function TasksPage() {
-  const { profile, canManageProjects } = useAuth()
+  const { profile, canManageProjects, isAdmin, isManager } = useAuth()
   const [tasks, setTasks] = useState<Task[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [members, setMembers] = useState<Profile[]>([])
+  const [myProjectIds, setMyProjectIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [projectFilter, setProjectFilter] = useState('')
@@ -23,6 +24,7 @@ export default function TasksPage() {
   const [showModal, setShowModal] = useState(false)
   const [editTask, setEditTask] = useState<Task | null>(null)
   const [saving, setSaving] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [form, setForm] = useState({ project_id: '', name: '', description: '', estimated_hours: '', assigned_to: '', due_date: '', status: 'todo' })
 
   useEffect(() => { if (profile) { fetchTasks(); fetchProjects() } }, [profile?.id, projectFilter, statusFilter])
@@ -50,11 +52,13 @@ export default function TasksPage() {
 
   const fetchProjects = async () => {
     if (!profile) return
+    const { data: mp } = await supabase.from('project_members').select('project_id').eq('user_id', profile.id)
+    const myIds = mp?.map(p => p.project_id) || []
+    setMyProjectIds(new Set(myIds))
+
     let query = supabase.from('projects').select('id, name').eq('status', 'active').order('name')
     if (!canManageProjects) {
-      const { data: mp } = await supabase.from('project_members').select('project_id').eq('user_id', profile.id)
-      const ids = mp?.map(p => p.project_id) || []
-      if (ids.length > 0) query = query.in('id', ids)
+      if (myIds.length > 0) query = query.in('id', myIds)
     }
     const { data } = await query
     setProjects((data || []) as unknown as Project[])
@@ -120,6 +124,38 @@ export default function TasksPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleDelete = async (task: Task) => {
+    if (!confirm(`Delete task "${task.name}"? This cannot be undone.`)) return
+    setDeletingId(task.id)
+    try {
+      const { error } = await supabase.from('tasks').delete().eq('id', task.id)
+      if (error) throw error
+      toast.success('Task deleted')
+      fetchTasks()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete task')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  // Permission helpers
+  const canEditTask = (task: Task) => {
+    if (!profile) return false
+    // Admin and manager can always edit
+    if (canManageProjects) return true
+    // Employees who are members of the task's project can edit
+    return myProjectIds.has(task.project_id)
+  }
+
+  const canDeleteTask = (task: Task) => {
+    if (!profile) return false
+    // Admin and manager can always delete
+    if (canManageProjects) return true
+    // Employee who created the task can delete it
+    return task.created_by === profile.id
   }
 
   const updateStatus = async (id: string, status: Task['status']) => {
@@ -209,12 +245,25 @@ export default function TasksPage() {
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
                           <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--chronos-text)', flex: 1 }}>{task.name}</span>
-                          {canManageProjects && (
-                            <button onClick={() => openEdit(task)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '2px', flexShrink: 0 }}
-                              onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-text)'}
-                              onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
-                            ><Edit2 size={11} /></button>
-                          )}
+                          <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+                            {canEditTask(task) && (
+                              <button onClick={() => openEdit(task)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '2px' }}
+                                onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-text)'}
+                                onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                                title="Edit task"
+                              ><Edit2 size={11} /></button>
+                            )}
+                            {canDeleteTask(task) && (
+                              <button
+                                onClick={() => handleDelete(task)}
+                                disabled={deletingId === task.id}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '2px' }}
+                                onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-danger, #ef4444)'}
+                                onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                                title="Delete task"
+                              ><Trash2 size={11} /></button>
+                            )}
+                          </div>
                         </div>
                         {proj && <div style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', marginBottom: '8px' }}>{proj.name}</div>}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>

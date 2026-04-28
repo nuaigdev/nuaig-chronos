@@ -8,7 +8,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { Project, Task, TimeLog, Profile } from '@/types'
 import { StatusBadge, Modal, FormField, Select, ProgressBar, EmptyState } from '@/components/ui'
 import { formatDate, formatHours, getInitials } from '@/utils'
-import { ArrowLeft, Plus, Clock, Users, CheckSquare, Calendar, Edit2 } from 'lucide-react'
+import { ArrowLeft, Plus, Clock, Users, CheckSquare, Calendar, Edit2, Trash2 } from 'lucide-react'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
 
@@ -24,12 +24,14 @@ export default function ProjectDetailPage() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [members, setMembers] = useState<Profile[]>([])
   const [recentLogs, setRecentLogs] = useState<EnrichedLog[]>([])
+  const [isMemberOfProject, setIsMemberOfProject] = useState(false)
   const [loggedHours, setLoggedHours] = useState(0)
   const [loading, setLoading] = useState(true)
 
   const [showTaskModal, setShowTaskModal] = useState(false)
   const [editTask, setEditTask] = useState<Task | null>(null)
   const [saving, setSaving] = useState(false)
+  const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null)
   const [taskForm, setTaskForm] = useState({ name: '', description: '', estimated_hours: '', assigned_to: '', due_date: '', status: 'todo' })
 
   useEffect(() => {
@@ -95,6 +97,33 @@ export default function ProjectDetailPage() {
     setRecentLogs(
       ((logData || []) as unknown as TimeLog[]).map(l => ({ ...l, userName: nameMap[l.user_id] || 'Unknown' }))
     )
+  }
+
+  const handleDeleteTask = async (task: Task) => {
+    if (!confirm(`Delete task "${task.name}"? This cannot be undone.`)) return
+    setDeletingTaskId(task.id)
+    try {
+      const { error } = await supabase.from('tasks').delete().eq('id', task.id)
+      if (error) throw error
+      toast.success('Task deleted')
+      fetchTasks()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete task')
+    } finally {
+      setDeletingTaskId(null)
+    }
+  }
+
+  const canEditTaskInProject = (task: Task) => {
+    if (!profile) return false
+    if (canManageProjects) return true
+    return isMemberOfProject
+  }
+
+  const canDeleteTaskInProject = (task: Task) => {
+    if (!profile) return false
+    if (canManageProjects) return true
+    return task.created_by === profile.id
   }
 
   const updateTaskStatus = async (taskId: string, newStatus: Task['status']) => {
@@ -277,12 +306,25 @@ export default function ProjectDetailPage() {
                           >
                             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px', marginBottom: '4px' }}>
                               <span style={{ fontSize: '12px', fontWeight: 600, flex: 1 }}>{task.name}</span>
-                              {canManageProjects && (
-                                <button onClick={() => openEdit(task)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '1px', flexShrink: 0 }}
-                                  onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-text)'}
-                                  onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
-                                ><Edit2 size={10} /></button>
-                              )}
+                              <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+                                {canEditTaskInProject(task) && (
+                                  <button onClick={() => openEdit(task)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '1px' }}
+                                    onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-text)'}
+                                    onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                                    title="Edit task"
+                                  ><Edit2 size={10} /></button>
+                                )}
+                                {canDeleteTaskInProject(task) && (
+                                  <button
+                                    onClick={() => handleDeleteTask(task)}
+                                    disabled={deletingTaskId === task.id}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '1px' }}
+                                    onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-danger, #ef4444)'}
+                                    onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                                    title="Delete task"
+                                  ><Trash2 size={10} /></button>
+                                )}
+                              </div>
                             </div>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '6px' }}>
                               {assignee && <span style={{ fontSize: '10px', color: 'var(--chronos-text-muted)', background: 'var(--chronos-surface)', padding: '1px 6px', borderRadius: '100px' }}>{assignee.full_name}</span>}
