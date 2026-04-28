@@ -28,6 +28,7 @@ export default function ProjectsPage() {
   const [showMembersModal, setShowMembersModal] = useState(false)
   const [membersProjectId, setMembersProjectId] = useState('')
   const [membersProjectName, setMembersProjectName] = useState('')
+  const [membersProjectCreatedBy, setMembersProjectCreatedBy] = useState('')
   const [projectMembers, setProjectMembers] = useState<Profile[]>([])
   const [availableToAdd, setAvailableToAdd] = useState<Profile[]>([])
   const [memberToAdd, setMemberToAdd] = useState('')
@@ -150,9 +151,10 @@ export default function ProjectsPage() {
 
   // ── Member management ──────────────────────────────────────
 
-  const openMembersModal = async (projectId: string, projectName: string) => {
+  const openMembersModal = async (projectId: string, projectName: string, projectCreatedBy: string) => {
     setMembersProjectId(projectId)
     setMembersProjectName(projectName)
+    setMembersProjectCreatedBy(projectCreatedBy)
     setMemberToAdd('')
     setShowMembersModal(true)
     setLoadingMembers(true)
@@ -202,8 +204,7 @@ export default function ProjectsPage() {
 
   const removeMember = async (userId: string) => {
     // Prevent removing the project owner
-    const currentProject = projects.find(p => p.id === membersProjectId)
-    if (currentProject && (currentProject as Project & { created_by?: string }).created_by === userId) {
+    if (membersProjectCreatedBy === userId) {
       toast.error('Cannot remove the project owner from the project.')
       return
     }
@@ -325,7 +326,7 @@ export default function ProjectsPage() {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--chronos-border)', paddingTop: '10px' }}>
                   {/* Member avatars — click to manage (managers) or view (employees) */}
                   <button
-                    onClick={() => openMembersModal(p.id, p.name)}
+                    onClick={() => openMembersModal(p.id, p.name, p.created_by)}
                     style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', borderRadius: '6px' }}
                     onMouseEnter={e => (e.currentTarget.style.background = 'var(--chronos-surface-2)')}
                     onMouseLeave={e => (e.currentTarget.style.background = 'none')}
@@ -425,8 +426,7 @@ export default function ProjectsPage() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {projectMembers.map(m => {
-                    const currentProject = projects.find(p => p.id === membersProjectId)
-                    const isOwner = currentProject && (currentProject as Project & { created_by?: string }).created_by === m.id
+                    const isOwner = membersProjectCreatedBy === m.id
                     return (
                     <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', borderRadius: '8px', background: 'var(--chronos-surface-2)' }}>
                       <div style={{ width: '30px', height: '30px', borderRadius: '8px', background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 700, color: 'white', flexShrink: 0 }}>

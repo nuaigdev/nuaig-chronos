@@ -6,7 +6,8 @@ import { useAuth } from '@/hooks/useAuth'
 import { useNotifications } from '@/hooks/useNotifications'
 import { createClient } from '@/lib/supabase/client'
 import { getInitials } from '@/utils'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import {
   LayoutDashboard, FolderKanban, CheckSquare, Clock, FileText,
   Users, BarChart3, Settings, Bell, Building2, LogOut, KeyRound, X
@@ -35,6 +36,9 @@ export default function Sidebar() {
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [passwordForm, setPasswordForm] = useState({ newPassword: '', confirmPassword: '' })
   const [changingPassword, setChangingPassword] = useState(false)
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => { setMounted(true) }, [])
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
@@ -69,6 +73,7 @@ export default function Sidebar() {
   )
 
   return (
+    <>
     <aside style={{
       width: '240px',
       minWidth: '240px',
@@ -186,12 +191,14 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* Password Change Modal */}
-      {showPasswordModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+    </aside>
+
+      {/* Password Change Modal — portal to escape sidebar stacking context */}
+      {mounted && showPasswordModal && createPortal(
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
           onClick={e => { if (e.target === e.currentTarget) { setShowPasswordModal(false); setPasswordForm({ newPassword: '', confirmPassword: '' }) } }}
         >
-          <div style={{ background: 'var(--chronos-surface)', borderRadius: '16px', border: '1px solid var(--chronos-border)', padding: '28px', width: '100%', maxWidth: '400px', boxShadow: '0 24px 48px rgba(0,0,0,0.4)' }}>
+          <div style={{ background: 'var(--chronos-surface)', borderRadius: '16px', border: '1px solid var(--chronos-border)', padding: '28px', width: '100%', maxWidth: '400px', boxShadow: '0 24px 48px rgba(0,0,0,0.4)', position: 'relative', zIndex: 10000 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(167,139,250,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--chronos-accent)' }}>
@@ -246,8 +253,9 @@ export default function Sidebar() {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
-    </aside>
+    </>
   )
 }
