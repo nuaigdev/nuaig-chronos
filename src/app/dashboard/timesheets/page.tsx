@@ -229,6 +229,10 @@ export default function TimesheetsPage() {
       return
     }
     if (Number(form.hours) > 24) { toast.error('Hours cannot exceed 24 in a day'); return }
+    if (!form.description || !form.description.trim()) {
+      toast.error('Notes are required — please describe what you worked on')
+      return
+    }
 
     // Validate date within week
     const logDate = new Date(form.log_date + 'T00:00:00')
@@ -247,7 +251,7 @@ export default function TimesheetsPage() {
             task_type_id: form.task_type_id,
             log_date: form.log_date,
             hours: Number(form.hours),
-            description: form.description || null,
+            description: form.description.trim(),
           })
           .eq('id', editLog.id)
         if (error) throw error
@@ -262,7 +266,7 @@ export default function TimesheetsPage() {
             task_type_id: form.task_type_id,
             log_date: form.log_date,
             hours: Number(form.hours),
-            description: form.description || null,
+            description: form.description.trim(),
           })
         if (error) throw error
         toast.success('Time logged')
@@ -699,10 +703,10 @@ export default function TimesheetsPage() {
               />
             </FormField>
 
-            <FormField label="Description">
+            <FormField label="Notes *">
               <textarea
                 className="input-base"
-                placeholder="Optional notes…"
+                placeholder="Describe what you worked on… (required)"
                 value={form.description}
                 onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
                 rows={3}

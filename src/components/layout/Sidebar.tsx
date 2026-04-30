@@ -10,7 +10,7 @@ import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import {
   LayoutDashboard, FolderKanban, FileText,
-  Users, BarChart3, Settings, Bell, Building2, LogOut, KeyRound, X
+  Users, BarChart3, Settings, Bell, Building2, LogOut, KeyRound, X, Layers
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -24,6 +24,7 @@ const NAV_ITEMS = [
   { href: '/dashboard/timesheets', icon: FileText, label: 'Timesheets', roles: ['admin', 'manager', 'employee'] },
   { href: '/dashboard/approvals', icon: FileText, label: 'Approvals', roles: ['admin', 'manager'] },
   { href: '/dashboard/team', icon: Users, label: 'Team', roles: ['admin', 'manager'] },
+  { href: '/dashboard/departments', icon: Layers, label: 'Departments', roles: ['admin'] },
   { href: '/dashboard/reports', icon: BarChart3, label: 'Reports', roles: ['admin', 'manager'] },
   { href: '/dashboard/settings', icon: Settings, label: 'Settings', roles: ['admin'] },
 ]

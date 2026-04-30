@@ -1,6 +1,24 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+// Routes that only admin or manager can access
+const ADMIN_MANAGER_ROUTES = [
+  '/dashboard/clients',
+  '/dashboard/approvals',
+  '/dashboard/reports',
+  '/dashboard/team',
+]
+
+// Routes that only admin can access
+const ADMIN_ONLY_ROUTES = [
+  '/dashboard/settings',
+  '/dashboard/departments',
+]
+
+function routeIsRestricted(pathname: string, routes: string[]): boolean {
+  return routes.some(route => pathname === route || pathname.startsWith(route + '/'))
+}
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
@@ -24,19 +42,52 @@ export async function middleware(request: NextRequest) {
   )
 
   const { data: { user } } = await supabase.auth.getUser()
+  const pathname = request.nextUrl.pathname
 
-  // Redirect unauthenticated users to login
-  if (!user && !request.nextUrl.pathname.startsWith('/login') && !request.nextUrl.pathname.startsWith('/auth')) {
+  // ── 1. Unauthenticated: redirect to login ──────────────────────────────────
+  if (!user && !pathname.startsWith('/login') && !pathname.startsWith('/auth')) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
   }
 
-  // Redirect authenticated users away from login
-  if (user && request.nextUrl.pathname === '/login') {
+  // ── 2. Authenticated on login page: redirect to dashboard ─────────────────
+  if (user && pathname === '/login') {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
     return NextResponse.redirect(url)
+  }
+
+  // ── 3. Role-based route protection ────────────────────────────────────────
+  //    We only check restricted routes to keep the hot path fast.
+  if (user && pathname.startsWith('/dashboard')) {
+    const isAdminManagerRoute = routeIsRestricted(pathname, ADMIN_MANAGER_ROUTES)
+    const isAdminOnlyRoute = routeIsRestricted(pathname, ADMIN_ONLY_ROUTES)
+
+    if (isAdminManagerRoute || isAdminOnlyRoute) {
+      // Fetch the profile to get the role.
+      // This is a server-side fetch using the anon key + user session,
+      // so RLS "Users can view all profiles" policy covers it.
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+      const role = profile?.role ?? 'employee'
+
+      if (isAdminOnlyRoute && role !== 'admin') {
+        const url = request.nextUrl.clone()
+        url.pathname = '/dashboard'
+        return NextResponse.redirect(url)
+      }
+
+      if (isAdminManagerRoute && role !== 'admin' && role !== 'manager') {
+        const url = request.nextUrl.clone()
+        url.pathname = '/dashboard'
+        return NextResponse.redirect(url)
+      }
+    }
   }
 
   return supabaseResponse

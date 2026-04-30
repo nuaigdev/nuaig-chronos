@@ -50,7 +50,7 @@ export default function ApprovalsPage() {
     if (logs[timesheetId]) return
     const { data } = await supabase
       .from('time_logs')
-      .select('*, project:projects(name), task:tasks(name)')
+      .select('*, project:projects(id,name,client:clients(name)), task_type:task_types(id,name)')
       .eq('timesheet_id', timesheetId)
       .order('log_date')
     setLogs(prev => ({ ...prev, [timesheetId]: (data || []) as unknown as TimeLog[] }))
@@ -209,41 +209,63 @@ export default function ApprovalsPage() {
                       <div style={{ padding: '20px', textAlign: 'center', color: 'var(--chronos-text-muted)', fontSize: '13px' }}>Loading...</div>
                     ) : logs[ts.id].length === 0 ? (
                       <div style={{ padding: '20px', textAlign: 'center', color: 'var(--chronos-text-muted)', fontSize: '13px' }}>No time logs</div>
-                    ) : (
-                      <>
-                        {Object.entries(
-                          logs[ts.id].reduce((acc, log) => {
-                            const proj = (log.project as { name: string } | undefined)?.name || 'Unknown'
-                            if (!acc[proj]) acc[proj] = []
-                            acc[proj].push(log)
-                            return acc
-                          }, {} as Record<string, TimeLog[]>)
-                        ).map(([projName, projLogs]) => (
-                          <div key={projName}>
-                            <div style={{ padding: '8px 20px', background: 'var(--chronos-surface-2)', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--chronos-border)' }}>
-                              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--chronos-text-subtle)' }}>{projName}</span>
-                              <span style={{ fontSize: '12px', fontFamily: 'JetBrains Mono, monospace', color: 'var(--chronos-accent)' }}>{formatHours(projLogs.reduce((s, l) => s + l.hours, 0))}</span>
-                            </div>
-                            {projLogs.map(log => (
-                              <div key={log.id} className="table-row" style={{ padding: '10px 20px', display: 'flex', gap: '12px', alignItems: 'center' }}>
-                                <div style={{ width: '90px', fontSize: '12px', color: 'var(--chronos-text-muted)', flexShrink: 0 }}>
-                                  {formatDate(log.log_date + 'T00:00:00', 'EEE, MMM d')}
-                                </div>
-                                <div style={{ flex: 1, fontSize: '13px', color: 'var(--chronos-text)' }}>
-                                  {(log.task as { name: string } | undefined)?.name || log.description || '—'}
-                                </div>
-                                <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '13px', fontWeight: 600 }}>{log.hours}h</div>
-                              </div>
+                    ) : (() => {
+                      // Group by date
+                      const byDate: Record<string, TimeLog[]> = {}
+                      for (const log of logs[ts.id]) {
+                        if (!byDate[log.log_date]) byDate[log.log_date] = []
+                        byDate[log.log_date].push(log)
+                      }
+                      return (
+                        <>
+                          {/* Table header */}
+                          <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr 1fr 1fr 60px', gap: '0', padding: '8px 20px', background: 'var(--chronos-surface-2)', borderBottom: '1px solid var(--chronos-border)' }}>
+                            {['Date', 'Client', 'Project', 'Task Type', 'Notes', 'Hours'].map(h => (
+                              <div key={h} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>{h}</div>
                             ))}
                           </div>
-                        ))}
-                        <div style={{ padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid var(--chronos-border)', background: 'var(--chronos-surface-2)' }}>
-                          <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '14px' }}>
-                            Total: <span style={{ color: 'var(--chronos-accent)' }}>{formatHours(ts.total_hours)}</span>
-                          </span>
-                        </div>
-                      </>
-                    )}
+
+                          {Object.entries(byDate).map(([date, dateLogs]) => {
+                            const dateTotal = dateLogs.reduce((s, l) => s + l.hours, 0)
+                            const d = new Date(date + 'T00:00:00')
+                            const dateLabel = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+                            return (
+                              <div key={date}>
+                                {/* Date heading row */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr 1fr 1fr 60px', gap: '0', padding: '10px 20px', background: 'rgba(99,102,241,0.05)', borderBottom: '1px solid var(--chronos-border)', borderTop: '1px solid var(--chronos-border)' }}>
+                                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--chronos-text)', fontFamily: 'Syne, sans-serif' }}>{dateLabel}</div>
+                                  <div /><div /><div /><div />
+                                  <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '13px', fontWeight: 700, color: 'var(--chronos-accent)' }}>{dateTotal}h</div>
+                                </div>
+
+                                {/* Logs for this date */}
+                                {dateLogs.map(log => {
+                                  const project = (log.project as { name: string; client?: { name: string } } | undefined)
+                                  const taskType = (log.task_type as { name: string } | undefined)
+                                  return (
+                                    <div key={log.id} className="table-row" style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr 1fr 1fr 60px', gap: '0', padding: '10px 20px', borderBottom: '1px solid var(--chronos-border)', alignItems: 'center' }}>
+                                      <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }} />
+                                      <div style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{project?.client?.name || '—'}</div>
+                                      <div style={{ fontSize: '13px', color: 'var(--chronos-text)', fontWeight: 500 }}>{project?.name || '—'}</div>
+                                      <div style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{taskType?.name || '—'}</div>
+                                      <div style={{ fontSize: '12px', color: 'var(--chronos-text-subtle)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{log.description || '—'}</div>
+                                      <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '13px', fontWeight: 600 }}>{log.hours}h</div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )
+                          })}
+
+                          {/* Grand total */}
+                          <div style={{ padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', borderTop: '2px solid var(--chronos-border)', background: 'var(--chronos-surface-2)' }}>
+                            <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '14px' }}>
+                              Weekly Total: <span style={{ color: 'var(--chronos-accent)' }}>{formatHours(ts.total_hours)}</span>
+                            </span>
+                          </div>
+                        </>
+                      )
+                    })()}
                   </div>
                 )}
               </div>
