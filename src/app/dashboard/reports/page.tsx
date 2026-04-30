@@ -354,192 +354,494 @@ export default function ReportsPage(){
     const projLogs=selProject?logs.filter(l=>l.project_id===selProject):[]
     const totalPH=sumH(projLogs)
 
-    const byTask=useMemo(()=>Object.entries(gby(projLogs,l=>l.taskTypeName)).map(([n,ls])=>({name:n,hours:parseFloat(sumH(ls).toFixed(1))})).sort((a,b)=>b.hours-a.hours),[projLogs])
-    const byDept=useMemo(()=>Object.entries(gby(projLogs,l=>l.department)).map(([n,ls])=>({name:n,hours:parseFloat(sumH(ls).toFixed(1))})).sort((a,b)=>b.hours-a.hours),[projLogs])
-    const byPerson=useMemo(()=>Object.entries(gby(projLogs,l=>l.user_id)).map(([uid,ls])=>({id:uid,name:ls[0].userName,dept:ls[0].department,hours:parseFloat(sumH(ls).toFixed(1))})).sort((a,b)=>b.hours-a.hours),[projLogs])
-    const wklyProj=useMemo(()=>{if(!selProject)return[];const ws=eachWeekOfInterval({start:pStart,end:pEnd>new Date()?new Date():pEnd},{weekStartsOn:1});return ws.map(w=>{const wE=endOfWeek(w,{weekStartsOn:1}),wS=format(w,'yyyy-MM-dd'),wES=format(wE,'yyyy-MM-dd');return{week:format(w,'MMM d'),hours:parseFloat(sumH(projLogs.filter(l=>l.log_date>=wS&&l.log_date<=wES)).toFixed(1))}});},[projLogs,selProject])
-
+    // ── list ──
     if(!selProject){
-      const ps=projects.map(p=>{const pl2=logs.filter(l=>l.project_id===p.id);const client=clients.find(c=>c.id===p.client_id);return{...p,clientName:client?.name||'No client',hours:sumH(pl2),people:new Set(pl2.map(l=>l.user_id)).size}}).sort((a,b)=>b.hours-a.hours)
+      const ps=projects.map(p=>{
+        const pl2=logs.filter(l=>l.project_id===p.id)
+        const client=clients.find(c=>c.id===p.client_id)
+        return{...p,clientName:client?.name||'No client',hours:sumH(pl2),
+          people:Object.keys(pl2.reduce((m,l)=>{m[l.user_id]=true;return m},{} as Record<string,true>)).length}
+      }).sort((a,b)=>b.hours-a.hours)
+      const maxH=ps[0]?.hours||1
       return(
         <div style={{display:'flex',flexDirection:'column',gap:'16px'}}>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'14px'}}><SCard icon={<FolderKanban size={20}/>} label="Projects" value={ps.length}/><SCard icon={<Clock size={20}/>} label="Total Hours" value={h(totalHours)} color="#60a5fa"/><SCard icon={<Users size={20}/>} label="Contributors" value={uPeople} color="#34d399"/></div>
-          {ps.length===0?<div className="card-base" style={{padding:'60px',textAlign:'center',color:'var(--chronos-text-muted)',fontSize:'14px'}}>No project data for this period</div>:<>
-            <div className="card-base" style={{padding:'20px'}}>
-              <SecTitle title="Hours per Project" sub="Click a bar or row to drill in"/>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={ps.slice(0,10)} margin={{top:4,right:4,bottom:28,left:-10}} onClick={d=>d?.activePayload&&setSelProject(ps.find(p=>p.name===d.activePayload![0].payload.name)?.id||null)}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/><XAxis dataKey="name" tick={{fontSize:10,fill:'#64748b'}} axisLine={false} tickLine={false} interval={0} angle={-20} textAnchor="end"/><YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
-                  <Tooltip {...TT} formatter={(v:number)=>[`${v.toFixed(1)}h`,'Hours']} cursor={{fill:'rgba(167,139,250,0.08)',cursor:'pointer'}}/><Bar dataKey="hours" radius={[6,6,0,0]} style={{cursor:'pointer'}}>{ps.slice(0,10).map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="card-base" style={{overflow:'hidden'}}>
-              <div style={{padding:'12px 20px',borderBottom:'1px solid var(--chronos-border)',display:'grid',gridTemplateColumns:'1fr 130px 80px 100px 110px 70px',gap:'10px'}}>
-                {['Project','Client','Status','Hours','Budget','People'].map(hd=><span key={hd} style={{fontSize:'11px',fontWeight:700,color:'var(--chronos-text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}>{hd}</span>)}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'14px'}}>
+            <SCard icon={<FolderKanban size={20}/>} label="Projects" value={ps.length}/>
+            <SCard icon={<Clock size={20}/>} label="Total Hours" value={h(totalHours)} color="#60a5fa"/>
+            <SCard icon={<Users size={20}/>} label="Contributors" value={uPeople} color="#34d399"/>
+          </div>
+          {ps.length===0
+            ?<div className="card-base" style={{padding:'60px',textAlign:'center',color:'var(--chronos-text-muted)',fontSize:'14px'}}>No project data for this period</div>
+            :<>
+              {/* bar chart */}
+              <div className="card-base" style={{padding:'20px'}}>
+                <SecTitle title="Hours per Project" sub="Click a bar or row to open project detail"/>
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={ps.slice(0,12)} margin={{top:4,right:4,bottom:32,left:-10}}
+                    onClick={d=>d?.activePayload&&setSelProject(ps.find(p=>p.name===d.activePayload![0].payload.name)?.id||null)}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/>
+                    <XAxis dataKey="name" tick={{fontSize:10,fill:'#64748b'}} axisLine={false} tickLine={false} interval={0} angle={-25} textAnchor="end"/>
+                    <YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+                    <Tooltip {...TT} formatter={(v:number)=>[`${v.toFixed(1)}h`,'Hours']} cursor={{fill:'rgba(167,139,250,0.08)',cursor:'pointer'}}/>
+                    <Bar dataKey="hours" radius={[6,6,0,0]} style={{cursor:'pointer'}}>
+                      {ps.slice(0,12).map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-              {ps.map((p,i)=>{
-                const pct=p.estimated_hours?Math.round((p.hours/p.estimated_hours)*100):null
-                return(
-                  <div key={p.id} className="table-row" onClick={()=>setSelProject(p.id)} style={{padding:'13px 20px',display:'grid',gridTemplateColumns:'1fr 130px 80px 100px 110px 70px',gap:'10px',alignItems:'center',borderBottom:i<ps.length-1?'1px solid var(--chronos-border)':'none',cursor:'pointer'}}>
-                    <span style={{fontWeight:600,fontSize:'13px',color:'var(--chronos-text)'}}>{p.name}</span>
-                    <span style={{fontSize:'12px',color:'var(--chronos-text-muted)'}}>{p.clientName}</span>
-                    <span style={{fontSize:'11px',padding:'2px 8px',borderRadius:'100px',background:'var(--chronos-surface-2)',color:'var(--chronos-text-muted)',textTransform:'capitalize',width:'fit-content'}}>{p.status}</span>
-                    <span style={{fontFamily:'var(--font-mono)',fontSize:'13px',fontWeight:700,color:ACCENT}}>{h(p.hours)}</span>
-                    <div>{pct!=null?<div style={{display:'flex',alignItems:'center',gap:'6px'}}><div style={{flex:1,height:'4px',borderRadius:'2px',background:'var(--chronos-surface-2)',overflow:'hidden'}}><div style={{height:'100%',width:`${Math.min(pct,100)}%`,background:pct>100?'#f87171':pct>80?'#fbbf24':ACCENT,borderRadius:'2px'}}/></div><span style={{fontSize:'11px',color:'var(--chronos-text-muted)',flexShrink:0}}>{pct}%</span></div>:<span style={{fontSize:'12px',color:'var(--chronos-text-muted)'}}>—</span>}</div>
-                    <span style={{fontSize:'13px',color:'var(--chronos-text-muted)'}}>{p.people}</span>
-                  </div>
-                )
-              })}
-            </div>
-          </>}
+              {/* project list */}
+              <div className="card-base" style={{overflow:'hidden'}}>
+                <div style={{padding:'12px 20px',borderBottom:'1px solid var(--chronos-border)',display:'grid',gridTemplateColumns:'1fr 130px 80px 90px 120px 60px',gap:'10px'}}>
+                  {['Project','Client','Status','Hours','Budget Used','Team'].map(hd=><span key={hd} style={{fontSize:'11px',fontWeight:700,color:'var(--chronos-text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}>{hd}</span>)}
+                </div>
+                {ps.map((p,i)=>{
+                  const pct=p.estimated_hours?Math.round((p.hours/p.estimated_hours)*100):null
+                  const barW=pct!=null?Math.min(pct,100):0
+                  const barC=pct!=null&&pct>100?'#f87171':pct!=null&&pct>80?'#fbbf24':ACCENT
+                  return(
+                    <div key={p.id} className="table-row" onClick={()=>setSelProject(p.id)}
+                      style={{padding:'12px 20px',display:'grid',gridTemplateColumns:'1fr 130px 80px 90px 120px 60px',gap:'10px',alignItems:'center',borderBottom:i<ps.length-1?'1px solid var(--chronos-border)':'none',cursor:'pointer'}}>
+                      <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+                        <div style={{width:'8px',height:'8px',borderRadius:'50%',background:COLORS[i%COLORS.length],flexShrink:0}}/>
+                        <span style={{fontWeight:600,fontSize:'13px',color:'var(--chronos-text)'}}>{p.name}</span>
+                      </div>
+                      <span style={{fontSize:'12px',color:'var(--chronos-text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.clientName}</span>
+                      <span style={{fontSize:'11px',padding:'2px 8px',borderRadius:'100px',background:'var(--chronos-surface-2)',color:'var(--chronos-text-muted)',textTransform:'capitalize',width:'fit-content'}}>{p.status}</span>
+                      <span style={{fontFamily:'var(--font-mono)',fontSize:'13px',fontWeight:700,color:ACCENT}}>{h(p.hours)}</span>
+                      <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                        {pct!=null?<><div style={{flex:1,height:'5px',borderRadius:'3px',background:'var(--chronos-surface-2)',overflow:'hidden'}}><div style={{height:'100%',width:`${barW}%`,background:barC,borderRadius:'3px'}}/></div><span style={{fontSize:'11px',color:'var(--chronos-text-muted)',flexShrink:0,minWidth:'32px'}}>{pct}%</span></>:<span style={{fontSize:'12px',color:'var(--chronos-text-muted)'}}>—</span>}
+                      </div>
+                      <span style={{fontSize:'13px',color:'var(--chronos-text-muted)'}}>{p.people}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          }
         </div>
       )
     }
 
+    // ── project detail ──
+    const byTask=Object.entries(gby(projLogs,l=>l.taskTypeName)).map(([n,ls])=>({name:n,hours:parseFloat(sumH(ls).toFixed(1)),pct:0})).sort((a,b)=>b.hours-a.hours).map(t=>({...t,pct:totalPH>0?Math.round((t.hours/totalPH)*100):0}))
+    const byDept=Object.entries(gby(projLogs,l=>l.department)).map(([n,ls])=>({name:n,hours:parseFloat(sumH(ls).toFixed(1))})).sort((a,b)=>b.hours-a.hours)
+    const byPerson=Object.entries(gby(projLogs,l=>l.user_id)).map(([uid,ls])=>({id:uid,name:ls[0].userName,dept:ls[0].department,hours:parseFloat(sumH(ls).toFixed(1)),pct:0,taskBreakdown:Object.entries(gby(ls,l=>l.taskTypeName)).map(([tn,tls])=>({name:tn,hours:parseFloat(sumH(tls).toFixed(1))})).sort((a,b)=>b.hours-a.hours)})).sort((a,b)=>b.hours-a.hours).map(p=>({...p,pct:totalPH>0?Math.round((p.hours/totalPH)*100):0}))
+    const wkly=eachWeekOfInterval({start:pStart,end:pEnd>new Date()?new Date():pEnd},{weekStartsOn:1}).map(w=>{const wE=endOfWeek(w,{weekStartsOn:1}),wS=format(w,'yyyy-MM-dd'),wES=format(wE,'yyyy-MM-dd');return{week:format(w,'MMM d'),hours:parseFloat(sumH(projLogs.filter(l=>l.log_date>=wS&&l.log_date<=wES)).toFixed(1))}})
     const estH=proj?.estimated_hours,burnPct=estH?Math.round((totalPH/estH)*100):null
+    const activeDaysP=Object.keys(projLogs.reduce((m,l)=>{m[l.log_date]=true;return m},{} as Record<string,true>)).length
+    const clientName=clients.find(c=>c.id===proj?.client_id)?.name||'No client'
+
     return(
-      <div style={{display:'flex',flexDirection:'column',gap:'16px'}}>
+      <div style={{display:'flex',flexDirection:'column',gap:'20px'}}>
+        {/* back + heading */}
         <div style={{display:'flex',alignItems:'center',gap:'12px'}}>
           <button onClick={()=>setSelProject(null)} className="btn-secondary" style={{padding:'7px 12px',gap:'6px'}}><ArrowLeft size={13}/> All Projects</button>
-          <div><div style={{fontFamily:'var(--font-display)',fontSize:'18px',fontWeight:800}}>{proj?.name}</div><div style={{fontSize:'12px',color:'var(--chronos-text-muted)'}}>{clients.find(c=>c.id===proj?.client_id)?.name||'No client'} · {pl}</div></div>
+          <div>
+            <div style={{fontFamily:'var(--font-display)',fontSize:'20px',fontWeight:800}}>{proj?.name}</div>
+            <div style={{fontSize:'12px',color:'var(--chronos-text-muted)',marginTop:'2px'}}>{clientName} · {pl}</div>
+          </div>
+          <div style={{marginLeft:'auto'}}><span style={{fontSize:'11px',padding:'3px 10px',borderRadius:'100px',background:'var(--chronos-surface-2)',color:'var(--chronos-text-muted)',textTransform:'capitalize',border:'1px solid var(--chronos-border)'}}>{proj?.status}</span></div>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'14px'}}>
+
+        {/* KPI row */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'12px'}}>
           <SCard icon={<Clock size={20}/>} label="Total Hours" value={h(totalPH)}/>
           <SCard icon={<FolderKanban size={20}/>} label="Est. Hours" value={estH?h(estH):'—'} color="#60a5fa"/>
           <SCard icon={<Users size={20}/>} label="Team Size" value={byPerson.length} color="#34d399"/>
           <SCard icon={<Layers size={20}/>} label="Budget Used" value={burnPct!=null?`${burnPct}%`:'—'} color={burnPct&&burnPct>100?'#f87171':burnPct&&burnPct>80?'#fbbf24':'#34d399'} sub={estH?`of ${h(estH)}`:undefined}/>
+          <SCard icon={<Calendar size={20}/>} label="Active Days" value={activeDaysP} color="#e879f9"/>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 300px',gap:'16px'}}>
-          <div className="card-base" style={{padding:'20px'}}>
-            <SecTitle title="Weekly Hours"/>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={wklyProj} margin={{top:4,right:4,bottom:0,left:-10}}>
-                <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/><XAxis dataKey="week" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
-                <Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/><Bar dataKey="hours" fill={ACCENT} radius={[6,6,0,0]}>{wklyProj.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="card-base" style={{padding:'20px'}}>
-            <SecTitle title="Department Split"/>
-            {byDept.length===0?<div style={{color:'var(--chronos-text-muted)',fontSize:'13px'}}>No data</div>:<>
-              <ResponsiveContainer width="100%" height={130}><PieChart><Pie data={byDept} dataKey="hours" nameKey="name" cx="50%" cy="50%" innerRadius={36} outerRadius={56} paddingAngle={3}>{byDept.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie><Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/></PieChart></ResponsiveContainer>
-              <div style={{display:'flex',flexDirection:'column',gap:'6px',marginTop:'8px'}}>{byDept.map((d,i)=><div key={d.name} style={{display:'flex',alignItems:'center',gap:'8px'}}><div style={{width:'8px',height:'8px',borderRadius:'2px',background:COLORS[i%COLORS.length],flexShrink:0}}/><span style={{fontSize:'12px',color:'var(--chronos-text-muted)',flex:1}}>{d.name}</span><span style={{fontSize:'12px',fontFamily:'var(--font-mono)',fontWeight:600}}>{h(d.hours)}</span></div>)}</div>
-            </>}
-          </div>
-        </div>
+
+        {/* Weekly trend */}
         <div className="card-base" style={{padding:'20px'}}>
-          <SecTitle title="Hours by Task Type" sub="Only task types with logged hours are shown"/>
-          {byTask.length===0?<div style={{color:'var(--chronos-text-muted)',fontSize:'13px'}}>No task type data</div>:<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px'}}>{byTask.map((t,i)=><MiniBar key={t.name} label={t.name} value={t.hours} max={byTask[0].hours} color={COLORS[i%COLORS.length]}/>)}</div>}
+          <SecTitle title="Weekly Hours Trend" sub="Hours logged per week across the selected period"/>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={wkly} margin={{top:4,right:4,bottom:0,left:-10}}>
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/>
+              <XAxis dataKey="week" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+              <YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+              <Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/>
+              <Bar dataKey="hours" radius={[6,6,0,0]}>{wkly.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </div>
-        <div className="card-base" style={{overflow:'hidden'}}>
-          <div style={{padding:'12px 20px',borderBottom:'1px solid var(--chronos-border)',display:'grid',gridTemplateColumns:'1fr 120px 80px 150px',gap:'12px'}}>
-            {['Member','Department','Hours','Share'].map(hd=><span key={hd} style={{fontSize:'11px',fontWeight:700,color:'var(--chronos-text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}>{hd}</span>)}
+
+        {/* Task type + dept side by side */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'16px'}}>
+
+          {/* Task type — full chart + table */}
+          <div className="card-base" style={{padding:'20px'}}>
+            <SecTitle title="Hours by Task Type" sub="What kind of work was done on this project"/>
+            {byTask.length===0
+              ?<div style={{color:'var(--chronos-text-muted)',fontSize:'13px',padding:'20px 0'}}>No task type data logged yet</div>
+              :<>
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={byTask} dataKey="hours" nameKey="name" cx="50%" cy="50%" outerRadius={80} paddingAngle={2} label={({name,pct})=>`${pct}%`} labelLine={false}>
+                      {byTask.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                    </Pie>
+                    <Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/>
+                  </PieChart>
+                </ResponsiveContainer>
+                <div style={{display:'flex',flexDirection:'column',gap:'0px',marginTop:'8px',borderTop:'1px solid var(--chronos-border)'}}>
+                  {byTask.map((t,i)=>(
+                    <div key={t.name} style={{display:'grid',gridTemplateColumns:'14px 1fr 52px 52px',gap:'8px',alignItems:'center',padding:'8px 4px',borderBottom:i<byTask.length-1?'1px solid var(--chronos-border)':''  }}>
+                      <div style={{width:'10px',height:'10px',borderRadius:'3px',background:COLORS[i%COLORS.length]}}/>
+                      <span style={{fontSize:'12px',color:'var(--chronos-text)',fontWeight:500}}>{t.name}</span>
+                      <span style={{fontFamily:'var(--font-mono)',fontSize:'12px',fontWeight:700,color:ACCENT,textAlign:'right'}}>{h(t.hours)}</span>
+                      <span style={{fontSize:'11px',color:'var(--chronos-text-muted)',textAlign:'right'}}>{t.pct}%</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            }
           </div>
-          {byPerson.map((p,i)=>{const pct=totalPH>0?Math.round((p.hours/totalPH)*100):0;return(
-            <div key={p.id} className="table-row" style={{padding:'13px 20px',display:'grid',gridTemplateColumns:'1fr 120px 80px 150px',gap:'12px',alignItems:'center',borderBottom:i<byPerson.length-1?'1px solid var(--chronos-border)':'none'}}>
-              <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
-                <div style={{width:'28px',height:'28px',borderRadius:'8px',background:`linear-gradient(135deg,${COLORS[i%COLORS.length]},${COLORS[(i+2)%COLORS.length]})`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,color:'white',flexShrink:0}}>{p.name.split(' ').map((n:string)=>n[0]).join('').slice(0,2).toUpperCase()}</div>
-                <span style={{fontWeight:600,fontSize:'13px',color:'var(--chronos-text)'}}>{p.name}</span>
+
+          {/* Department breakdown */}
+          <div className="card-base" style={{padding:'20px'}}>
+            <SecTitle title="Hours by Department" sub="Which teams contributed to this project"/>
+            {byDept.length===0
+              ?<div style={{color:'var(--chronos-text-muted)',fontSize:'13px',padding:'20px 0'}}>No department data</div>
+              :<>
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={byDept} dataKey="hours" nameKey="name" cx="50%" cy="50%" innerRadius={48} outerRadius={80} paddingAngle={3}>
+                      {byDept.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                    </Pie>
+                    <Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/>
+                  </PieChart>
+                </ResponsiveContainer>
+                <div style={{display:'flex',flexDirection:'column',gap:'8px',marginTop:'8px'}}>
+                  {byDept.map((d,i)=>{
+                    const pct=totalPH>0?Math.round((d.hours/totalPH)*100):0
+                    return(
+                      <div key={d.name}>
+                        <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}>
+                          <div style={{display:'flex',alignItems:'center',gap:'6px'}}><div style={{width:'8px',height:'8px',borderRadius:'2px',background:COLORS[i%COLORS.length]}}/><span style={{fontSize:'12px',color:'var(--chronos-text)',fontWeight:500}}>{d.name}</span></div>
+                          <div style={{display:'flex',gap:'10px',alignItems:'center'}}><span style={{fontFamily:'var(--font-mono)',fontSize:'12px',fontWeight:700,color:ACCENT}}>{h(d.hours)}</span><span style={{fontSize:'11px',color:'var(--chronos-text-muted)',minWidth:'30px',textAlign:'right'}}>{pct}%</span></div>
+                        </div>
+                        <div style={{height:'5px',borderRadius:'3px',background:'var(--chronos-surface-2)',overflow:'hidden'}}><div style={{height:'100%',width:`${pct}%`,background:COLORS[i%COLORS.length],borderRadius:'3px'}}/></div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            }
+          </div>
+        </div>
+
+        {/* Per-department task type chart */}
+        {byDept.length>1&&(()=>{
+          const deptTaskData=byDept.map(d=>{
+            const dl=projLogs.filter(l=>l.department===d.name)
+            const row:Record<string,string|number>={dept:d.name}
+            Object.entries(gby(dl,l=>l.taskTypeName)).forEach(([tn,ls])=>{row[tn]=parseFloat(sumH(ls).toFixed(1))})
+            return row
+          })
+          const allTaskNames=Object.keys(projLogs.reduce((m,l)=>{m[l.taskTypeName]=true;return m},{} as Record<string,true>))
+          return(
+            <div className="card-base" style={{padding:'20px'}}>
+              <SecTitle title="Task Type Distribution by Department" sub="Stacked view showing how each department spent hours across task types"/>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={deptTaskData} margin={{top:4,right:4,bottom:0,left:-10}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/>
+                  <XAxis dataKey="dept" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+                  <YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+                  <Tooltip {...TT} cursor={{fill:'rgba(167,139,250,0.06)'}}/>
+                  {allTaskNames.map((tn,i)=><Bar key={tn} dataKey={tn} stackId="a" fill={COLORS[i%COLORS.length]} radius={i===allTaskNames.length-1?[4,4,0,0]:[0,0,0,0]}/>)}
+                </BarChart>
+              </ResponsiveContainer>
+              <div style={{display:'flex',flexWrap:'wrap',gap:'12px',marginTop:'12px'}}>
+                {allTaskNames.map((tn,i)=><div key={tn} style={{display:'flex',alignItems:'center',gap:'5px'}}><div style={{width:'10px',height:'10px',borderRadius:'2px',background:COLORS[i%COLORS.length]}}/><span style={{fontSize:'11px',color:'var(--chronos-text-muted)'}}>{tn}</span></div>)}
               </div>
-              <span style={{fontSize:'12px',color:'var(--chronos-text-muted)'}}>{p.dept||'—'}</span>
-              <span style={{fontFamily:'var(--font-mono)',fontSize:'13px',fontWeight:700,color:ACCENT}}>{h(p.hours)}</span>
-              <div style={{display:'flex',alignItems:'center',gap:'8px'}}><div style={{flex:1,height:'4px',borderRadius:'2px',background:'var(--chronos-surface-2)',overflow:'hidden'}}><div style={{height:'100%',width:`${pct}%`,background:COLORS[i%COLORS.length],borderRadius:'2px'}}/></div><span style={{fontSize:'11px',color:'var(--chronos-text-muted)',flexShrink:0,minWidth:'28px'}}>{pct}%</span></div>
             </div>
-          )})}
+          )
+        })()}
+
+        {/* Team contributions — each person + their task breakdown */}
+        <div className="card-base" style={{overflow:'hidden'}}>
+          <div style={{padding:'16px 20px',borderBottom:'1px solid var(--chronos-border)'}}>
+            <SecTitle title="Team Contributions" sub="Each contributor, their department, total hours, project share, and task breakdown"/>
+          </div>
+          {byPerson.map((p,i)=>(
+            <div key={p.id} style={{padding:'16px 20px',borderBottom:i<byPerson.length-1?'1px solid var(--chronos-border)':'none'}}>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 120px 90px 120px',gap:'12px',alignItems:'center',marginBottom:'10px'}}>
+                <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+                  <div style={{width:'32px',height:'32px',borderRadius:'10px',background:`linear-gradient(135deg,${COLORS[i%COLORS.length]},${COLORS[(i+2)%COLORS.length]})`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'12px',fontWeight:700,color:'white',flexShrink:0}}>{p.name.split(' ').map((n:string)=>n[0]).join('').slice(0,2).toUpperCase()}</div>
+                  <div><div style={{fontWeight:600,fontSize:'13px',color:'var(--chronos-text)'}}>{p.name}</div><div style={{fontSize:'11px',color:'var(--chronos-text-muted)'}}>{p.dept||'—'}</div></div>
+                </div>
+                <span style={{fontFamily:'var(--font-mono)',fontSize:'14px',fontWeight:800,color:ACCENT}}>{h(p.hours)}</span>
+                <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                  <div style={{flex:1,height:'5px',borderRadius:'3px',background:'var(--chronos-surface-2)',overflow:'hidden'}}><div style={{height:'100%',width:`${p.pct}%`,background:COLORS[i%COLORS.length],borderRadius:'3px'}}/></div>
+                  <span style={{fontSize:'11px',color:'var(--chronos-text-muted)',flexShrink:0}}>{p.pct}%</span>
+                </div>
+                <span style={{fontSize:'11px',color:'var(--chronos-text-muted)'}}>of project</span>
+              </div>
+              {/* task mini-bars for this person */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'6px 20px',paddingLeft:'42px'}}>
+                {p.taskBreakdown.map((t,j)=>{
+                  const tpct=p.hours>0?Math.round((t.hours/p.hours)*100):0
+                  return(
+                    <div key={t.name} style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                      <div style={{width:'6px',height:'6px',borderRadius:'2px',background:COLORS[j%COLORS.length],flexShrink:0}}/>
+                      <span style={{fontSize:'11px',color:'var(--chronos-text-muted)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.name}</span>
+                      <span style={{fontFamily:'var(--font-mono)',fontSize:'11px',color:'var(--chronos-text)',fontWeight:600,flexShrink:0}}>{h(t.hours)}</span>
+                      <span style={{fontSize:'10px',color:'var(--chronos-text-muted)',flexShrink:0,minWidth:'28px',textAlign:'right'}}>{tpct}%</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     )
   }
+
 
   // ─── CLIENTS ─────────────────────────────────────────────────────────────
   const ClientsTab=()=>{
     const client=clients.find(c=>c.id===selClient)
     const cLogs=selClient?logs.filter(l=>l.clientId===selClient):[]
     const totalCH=sumH(cLogs)
-    const cSummary=useMemo(()=>clients.map(c=>{const cl=logs.filter(l=>l.clientId===c.id);return{...c,hours:sumH(cl),projects:new Set(cl.map(l=>l.project_id)).size,people:new Set(cl.map(l=>l.user_id)).size}}).sort((a,b)=>b.hours-a.hours),[])
+    const cSummary=clients.map(c=>{
+      const cl=logs.filter(l=>l.clientId===c.id)
+      return{...c,hours:sumH(cl),
+        projects:Object.keys(cl.reduce((m,l)=>{m[l.project_id]=true;return m},{} as Record<string,true>)).length,
+        people:Object.keys(cl.reduce((m,l)=>{m[l.user_id]=true;return m},{} as Record<string,true>)).length}
+    }).sort((a,b)=>b.hours-a.hours)
 
+    // ── list ──
     if(!selClient){
       return(
         <div style={{display:'flex',flexDirection:'column',gap:'16px'}}>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'14px'}}><SCard icon={<Building2 size={20}/>} label="Clients" value={clients.length}/><SCard icon={<Clock size={20}/>} label="Total Hours" value={h(totalHours)} color="#60a5fa"/><SCard icon={<FolderKanban size={20}/>} label="Client Projects" value={uProjects} color="#34d399"/></div>
-          {cSummary.length===0?<div className="card-base" style={{padding:'60px',textAlign:'center',color:'var(--chronos-text-muted)',fontSize:'14px'}}>No client data for this period</div>:<>
-            <div className="card-base" style={{padding:'20px'}}>
-              <SecTitle title="Hours per Client" sub="Click to drill in"/>
-              <ResponsiveContainer width="100%" height={Math.max(180,cSummary.length*44)}>
-                <BarChart data={cSummary} layout="vertical" margin={{top:0,right:16,bottom:0,left:100}} onClick={d=>d?.activePayload&&setSelClient(cSummary.find(c=>c.name===d.activePayload![0].payload.name)?.id||null)}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={GRID} horizontal={false}/><XAxis type="number" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/><YAxis type="category" dataKey="name" tick={{fontSize:12,fill:'#94a3b8'}} axisLine={false} tickLine={false} width={96}/>
-                  <Tooltip {...TT} formatter={(v:number)=>[`${v.toFixed(1)}h`,'Hours']} cursor={{fill:'rgba(167,139,250,0.06)',cursor:'pointer'}}/><Bar dataKey="hours" radius={[0,6,6,0]} style={{cursor:'pointer'}}>{cSummary.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="card-base" style={{overflow:'hidden'}}>
-              <div style={{padding:'12px 20px',borderBottom:'1px solid var(--chronos-border)',display:'grid',gridTemplateColumns:'1fr 100px 90px 90px',gap:'12px'}}>
-                {['Client','Hours','Projects','People'].map(hd=><span key={hd} style={{fontSize:'11px',fontWeight:700,color:'var(--chronos-text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}>{hd}</span>)}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'14px'}}>
+            <SCard icon={<Building2 size={20}/>} label="Clients" value={clients.length}/>
+            <SCard icon={<Clock size={20}/>} label="Total Hours" value={h(totalHours)} color="#60a5fa"/>
+            <SCard icon={<FolderKanban size={20}/>} label="Client Projects" value={uProjects} color="#34d399"/>
+          </div>
+          {cSummary.length===0
+            ?<div className="card-base" style={{padding:'60px',textAlign:'center',color:'var(--chronos-text-muted)',fontSize:'14px'}}>No client data for this period</div>
+            :<>
+              <div className="card-base" style={{padding:'20px'}}>
+                <SecTitle title="Hours per Client" sub="Click a bar or row to open client detail"/>
+                <ResponsiveContainer width="100%" height={Math.max(180,cSummary.length*48)}>
+                  <BarChart data={cSummary} layout="vertical" margin={{top:0,right:16,bottom:0,left:100}}
+                    onClick={d=>d?.activePayload&&setSelClient(cSummary.find(c=>c.name===d.activePayload![0].payload.name)?.id||null)}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={GRID} horizontal={false}/>
+                    <XAxis type="number" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+                    <YAxis type="category" dataKey="name" tick={{fontSize:12,fill:'#94a3b8'}} axisLine={false} tickLine={false} width={96}/>
+                    <Tooltip {...TT} formatter={(v:number)=>[`${v.toFixed(1)}h`,'Hours']} cursor={{fill:'rgba(167,139,250,0.06)',cursor:'pointer'}}/>
+                    <Bar dataKey="hours" radius={[0,6,6,0]} style={{cursor:'pointer'}}>
+                      {cSummary.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-              {cSummary.map((c,i)=>(
-                <div key={c.id} className="table-row" onClick={()=>setSelClient(c.id)} style={{padding:'13px 20px',display:'grid',gridTemplateColumns:'1fr 100px 90px 90px',gap:'12px',alignItems:'center',borderBottom:i<cSummary.length-1?'1px solid var(--chronos-border)':'none',cursor:'pointer'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
-                    <div style={{width:'30px',height:'30px',borderRadius:'8px',background:`${COLORS[i%COLORS.length]}30`,display:'flex',alignItems:'center',justifyContent:'center',color:COLORS[i%COLORS.length],fontSize:'13px',fontWeight:800,flexShrink:0}}>{c.name[0].toUpperCase()}</div>
-                    <span style={{fontWeight:600,fontSize:'13px',color:'var(--chronos-text)'}}>{c.name}</span>
-                  </div>
-                  <span style={{fontFamily:'var(--font-mono)',fontSize:'13px',fontWeight:700,color:ACCENT}}>{h(c.hours)}</span>
-                  <span style={{fontSize:'13px',color:'var(--chronos-text-muted)'}}>{c.projects}</span>
-                  <span style={{fontSize:'13px',color:'var(--chronos-text-muted)'}}>{c.people}</span>
+              <div className="card-base" style={{overflow:'hidden'}}>
+                <div style={{padding:'12px 20px',borderBottom:'1px solid var(--chronos-border)',display:'grid',gridTemplateColumns:'1fr 100px 90px 90px',gap:'12px'}}>
+                  {['Client','Hours','Projects','People'].map(hd=><span key={hd} style={{fontSize:'11px',fontWeight:700,color:'var(--chronos-text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}>{hd}</span>)}
                 </div>
-              ))}
-            </div>
-          </>}
+                {cSummary.map((c,i)=>(
+                  <div key={c.id} className="table-row" onClick={()=>setSelClient(c.id)}
+                    style={{padding:'13px 20px',display:'grid',gridTemplateColumns:'1fr 100px 90px 90px',gap:'12px',alignItems:'center',borderBottom:i<cSummary.length-1?'1px solid var(--chronos-border)':'none',cursor:'pointer'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+                      <div style={{width:'32px',height:'32px',borderRadius:'10px',background:`${COLORS[i%COLORS.length]}25`,display:'flex',alignItems:'center',justifyContent:'center',color:COLORS[i%COLORS.length],fontSize:'14px',fontWeight:800,flexShrink:0}}>{c.name[0].toUpperCase()}</div>
+                      <span style={{fontWeight:600,fontSize:'13px',color:'var(--chronos-text)'}}>{c.name}</span>
+                    </div>
+                    <span style={{fontFamily:'var(--font-mono)',fontSize:'13px',fontWeight:700,color:ACCENT}}>{h(c.hours)}</span>
+                    <span style={{fontSize:'13px',color:'var(--chronos-text-muted)'}}>{c.projects}</span>
+                    <span style={{fontSize:'13px',color:'var(--chronos-text-muted)'}}>{c.people}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          }
         </div>
       )
     }
 
-    const byProj=useMemo(()=>Object.entries(gby(cLogs,l=>l.projectName)).map(([n,ls])=>({name:n,hours:parseFloat(sumH(ls).toFixed(1))})).sort((a,b)=>b.hours-a.hours),[cLogs])
-    const byPerson=useMemo(()=>Object.entries(gby(cLogs,l=>l.user_id)).map(([uid,ls])=>({id:uid,name:ls[0].userName,dept:ls[0].department,hours:sumH(ls)})).sort((a,b)=>b.hours-a.hours),[cLogs])
-    const byDept=useMemo(()=>Object.entries(gby(cLogs,l=>l.department)).map(([n,ls])=>({name:n,hours:parseFloat(sumH(ls).toFixed(1))})).sort((a,b)=>b.hours-a.hours),[cLogs])
-    const byTask=useMemo(()=>Object.entries(gby(cLogs,l=>l.taskTypeName)).map(([n,ls])=>({name:n,hours:parseFloat(sumH(ls).toFixed(1))})).sort((a,b)=>b.hours-a.hours),[cLogs])
+    // ── client detail ──
+    const byProj=Object.entries(gby(cLogs,l=>l.project_id)).map(([pid,ls])=>({id:pid,name:ls[0].projectName,hours:parseFloat(sumH(ls).toFixed(1)),pct:0,taskBreakdown:Object.entries(gby(ls,l=>l.taskTypeName)).map(([tn,tls])=>({name:tn,hours:parseFloat(sumH(tls).toFixed(1))})).sort((a,b)=>b.hours-a.hours)})).sort((a,b)=>b.hours-a.hours).map(p=>({...p,pct:totalCH>0?Math.round((p.hours/totalCH)*100):0}))
+    const byTask=Object.entries(gby(cLogs,l=>l.taskTypeName)).map(([n,ls])=>({name:n,hours:parseFloat(sumH(ls).toFixed(1)),pct:0})).sort((a,b)=>b.hours-a.hours).map(t=>({...t,pct:totalCH>0?Math.round((t.hours/totalCH)*100):0}))
+    const byDept=Object.entries(gby(cLogs,l=>l.department)).map(([n,ls])=>({name:n,hours:parseFloat(sumH(ls).toFixed(1))})).sort((a,b)=>b.hours-a.hours)
+    const byPerson=Object.entries(gby(cLogs,l=>l.user_id)).map(([uid,ls])=>({id:uid,name:ls[0].userName,dept:ls[0].department,hours:parseFloat(sumH(ls).toFixed(1)),pct:0,projectBreakdown:Object.entries(gby(ls,l=>l.projectName)).map(([pn,pls])=>({name:pn,hours:parseFloat(sumH(pls).toFixed(1))})).sort((a,b)=>b.hours-a.hours)})).sort((a,b)=>b.hours-a.hours).map(p=>({...p,pct:totalCH>0?Math.round((p.hours/totalCH)*100):0}))
+    const activeDaysC=Object.keys(cLogs.reduce((m,l)=>{m[l.log_date]=true;return m},{} as Record<string,true>)).length
+    const wklyC=eachWeekOfInterval({start:pStart,end:pEnd>new Date()?new Date():pEnd},{weekStartsOn:1}).map(w=>{const wE=endOfWeek(w,{weekStartsOn:1}),wS=format(w,'yyyy-MM-dd'),wES=format(wE,'yyyy-MM-dd');return{week:format(w,'MMM d'),hours:parseFloat(sumH(cLogs.filter(l=>l.log_date>=wS&&l.log_date<=wES)).toFixed(1))}})
 
     return(
-      <div style={{display:'flex',flexDirection:'column',gap:'16px'}}>
+      <div style={{display:'flex',flexDirection:'column',gap:'20px'}}>
+        {/* back + heading */}
         <div style={{display:'flex',alignItems:'center',gap:'12px'}}>
           <button onClick={()=>setSelClient(null)} className="btn-secondary" style={{padding:'7px 12px',gap:'6px'}}><ArrowLeft size={13}/> All Clients</button>
-          <div><div style={{fontFamily:'var(--font-display)',fontSize:'18px',fontWeight:800}}>{client?.name}</div><div style={{fontSize:'12px',color:'var(--chronos-text-muted)'}}>{pl}</div></div>
+          <div>
+            <div style={{fontFamily:'var(--font-display)',fontSize:'20px',fontWeight:800}}>{client?.name}</div>
+            <div style={{fontSize:'12px',color:'var(--chronos-text-muted)',marginTop:'2px'}}>{pl}</div>
+          </div>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'14px'}}>
+
+        {/* KPIs */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'12px'}}>
           <SCard icon={<Clock size={20}/>} label="Total Hours" value={h(totalCH)}/>
           <SCard icon={<FolderKanban size={20}/>} label="Projects" value={byProj.length} color="#60a5fa"/>
           <SCard icon={<Users size={20}/>} label="Contributors" value={byPerson.length} color="#34d399"/>
-          <SCard icon={<Calendar size={20}/>} label="Active Days" value={new Set(cLogs.map(l=>l.log_date)).size} color="#fbbf24"/>
+          <SCard icon={<Building2 size={20}/>} label="Departments" value={byDept.length} color="#fbbf24"/>
+          <SCard icon={<Calendar size={20}/>} label="Active Days" value={activeDaysC} color="#e879f9"/>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 300px',gap:'16px'}}>
-          <div className="card-base" style={{padding:'20px'}}><SecTitle title="Projects"/><div style={{display:'flex',flexDirection:'column',gap:'10px'}}>{byProj.map((p,i)=><MiniBar key={p.name} label={p.name} value={p.hours} max={byProj[0]?.hours||1} color={COLORS[i%COLORS.length]}/>)}</div></div>
+
+        {/* Weekly trend */}
+        <div className="card-base" style={{padding:'20px'}}>
+          <SecTitle title="Weekly Hours Trend" sub="Total hours billed to this client per week"/>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={wklyC} margin={{top:4,right:4,bottom:0,left:-10}}>
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/>
+              <XAxis dataKey="week" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+              <YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+              <Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/>
+              <Bar dataKey="hours" radius={[6,6,0,0]}>{wklyC.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Task type + Department */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'16px'}}>
+          {/* Task type pie + table */}
           <div className="card-base" style={{padding:'20px'}}>
-            <SecTitle title="By Department"/>
-            <ResponsiveContainer width="100%" height={130}><PieChart><Pie data={byDept} dataKey="hours" nameKey="name" cx="50%" cy="50%" innerRadius={36} outerRadius={56} paddingAngle={3}>{byDept.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie><Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/></PieChart></ResponsiveContainer>
-            <div style={{display:'flex',flexDirection:'column',gap:'6px',marginTop:'8px'}}>{byDept.map((d,i)=><div key={d.name} style={{display:'flex',alignItems:'center',gap:'8px'}}><div style={{width:'8px',height:'8px',borderRadius:'2px',background:COLORS[i%COLORS.length],flexShrink:0}}/><span style={{fontSize:'12px',color:'var(--chronos-text-muted)',flex:1}}>{d.name}</span><span style={{fontSize:'12px',fontFamily:'var(--font-mono)',fontWeight:600}}>{h(d.hours)}</span></div>)}</div>
+            <SecTitle title="Hours by Task Type" sub="What type of work was delivered to this client"/>
+            {byTask.length===0?<div style={{color:'var(--chronos-text-muted)',fontSize:'13px'}}>No task type data</div>:<>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={byTask} dataKey="hours" nameKey="name" cx="50%" cy="50%" outerRadius={80} paddingAngle={2} label={({pct})=>`${pct}%`} labelLine={false}>
+                    {byTask.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                  </Pie>
+                  <Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/>
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{display:'flex',flexDirection:'column',gap:'0',marginTop:'8px',borderTop:'1px solid var(--chronos-border)'}}>
+                {byTask.map((t,i)=>(
+                  <div key={t.name} style={{display:'grid',gridTemplateColumns:'12px 1fr 52px 44px',gap:'8px',alignItems:'center',padding:'8px 4px',borderBottom:i<byTask.length-1?'1px solid var(--chronos-border)':''}}>
+                    <div style={{width:'10px',height:'10px',borderRadius:'3px',background:COLORS[i%COLORS.length]}}/>
+                    <span style={{fontSize:'12px',color:'var(--chronos-text)',fontWeight:500}}>{t.name}</span>
+                    <span style={{fontFamily:'var(--font-mono)',fontSize:'12px',fontWeight:700,color:ACCENT,textAlign:'right'}}>{h(t.hours)}</span>
+                    <span style={{fontSize:'11px',color:'var(--chronos-text-muted)',textAlign:'right'}}>{t.pct}%</span>
+                  </div>
+                ))}
+              </div>
+            </>}
+          </div>
+
+          {/* Department breakdown */}
+          <div className="card-base" style={{padding:'20px'}}>
+            <SecTitle title="Hours by Department" sub="Which teams contributed hours to this client"/>
+            {byDept.length===0?<div style={{color:'var(--chronos-text-muted)',fontSize:'13px'}}>No department data</div>:<>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={byDept} dataKey="hours" nameKey="name" cx="50%" cy="50%" innerRadius={48} outerRadius={80} paddingAngle={3}>
+                    {byDept.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                  </Pie>
+                  <Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/>
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{display:'flex',flexDirection:'column',gap:'8px',marginTop:'8px'}}>
+                {byDept.map((d,i)=>{
+                  const pct=totalCH>0?Math.round((d.hours/totalCH)*100):0
+                  return(
+                    <div key={d.name}>
+                      <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:'6px'}}><div style={{width:'8px',height:'8px',borderRadius:'2px',background:COLORS[i%COLORS.length]}}/><span style={{fontSize:'12px',color:'var(--chronos-text)',fontWeight:500}}>{d.name}</span></div>
+                        <div style={{display:'flex',gap:'10px'}}><span style={{fontFamily:'var(--font-mono)',fontSize:'12px',fontWeight:700,color:ACCENT}}>{h(d.hours)}</span><span style={{fontSize:'11px',color:'var(--chronos-text-muted)',minWidth:'30px',textAlign:'right'}}>{pct}%</span></div>
+                      </div>
+                      <div style={{height:'5px',borderRadius:'3px',background:'var(--chronos-surface-2)',overflow:'hidden'}}><div style={{height:'100%',width:`${pct}%`,background:COLORS[i%COLORS.length],borderRadius:'3px'}}/></div>
+                    </div>
+                  )
+                })}
+              </div>
+            </>}
           </div>
         </div>
-        <div className="card-base" style={{padding:'20px'}}><SecTitle title="Effort by Task Type" sub="Across all projects for this client"/><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px'}}>{byTask.map((t,i)=><MiniBar key={t.name} label={t.name} value={t.hours} max={byTask[0]?.hours||1} color={COLORS[i%COLORS.length]}/>)}</div></div>
+
+        {/* Projects — each project with its own task breakdown */}
         <div className="card-base" style={{overflow:'hidden'}}>
-          <div style={{padding:'12px 20px',borderBottom:'1px solid var(--chronos-border)',display:'grid',gridTemplateColumns:'1fr 120px 80px 150px',gap:'12px'}}>
-            {['Member','Department','Hours','Share'].map(hd=><span key={hd} style={{fontSize:'11px',fontWeight:700,color:'var(--chronos-text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}>{hd}</span>)}
+          <div style={{padding:'16px 20px',borderBottom:'1px solid var(--chronos-border)'}}>
+            <SecTitle title="Project Breakdown" sub="Hours per project and task type distribution within each project"/>
           </div>
-          {byPerson.map((p,i)=>{const pct=totalCH>0?Math.round((p.hours/totalCH)*100):0;return(
-            <div key={p.id} className="table-row" style={{padding:'13px 20px',display:'grid',gridTemplateColumns:'1fr 120px 80px 150px',gap:'12px',alignItems:'center',borderBottom:i<byPerson.length-1?'1px solid var(--chronos-border)':'none'}}>
-              <div style={{display:'flex',alignItems:'center',gap:'8px'}}><div style={{width:'28px',height:'28px',borderRadius:'8px',background:`linear-gradient(135deg,${COLORS[i%COLORS.length]},${COLORS[(i+2)%COLORS.length]})`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'11px',fontWeight:700,color:'white',flexShrink:0}}>{p.name.split(' ').map((n:string)=>n[0]).join('').slice(0,2).toUpperCase()}</div><span style={{fontWeight:600,fontSize:'13px',color:'var(--chronos-text)'}}>{p.name}</span></div>
-              <span style={{fontSize:'12px',color:'var(--chronos-text-muted)'}}>{p.dept||'—'}</span>
-              <span style={{fontFamily:'var(--font-mono)',fontSize:'13px',fontWeight:700,color:ACCENT}}>{h(p.hours)}</span>
-              <div style={{display:'flex',alignItems:'center',gap:'8px'}}><div style={{flex:1,height:'4px',borderRadius:'2px',background:'var(--chronos-surface-2)',overflow:'hidden'}}><div style={{height:'100%',width:`${pct}%`,background:COLORS[i%COLORS.length],borderRadius:'2px'}}/></div><span style={{fontSize:'11px',color:'var(--chronos-text-muted)',flexShrink:0,minWidth:'28px'}}>{pct}%</span></div>
+          {byProj.map((p,i)=>(
+            <div key={p.id} style={{padding:'16px 20px',borderBottom:i<byProj.length-1?'1px solid var(--chronos-border)':'none'}}>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 90px 120px',gap:'12px',alignItems:'center',marginBottom:'10px'}}>
+                <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+                  <div style={{width:'8px',height:'8px',borderRadius:'50%',background:COLORS[i%COLORS.length],flexShrink:0}}/>
+                  <span style={{fontWeight:700,fontSize:'13px',color:'var(--chronos-text)'}}>{p.name}</span>
+                </div>
+                <span style={{fontFamily:'var(--font-mono)',fontSize:'14px',fontWeight:800,color:ACCENT}}>{h(p.hours)}</span>
+                <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                  <div style={{flex:1,height:'5px',borderRadius:'3px',background:'var(--chronos-surface-2)',overflow:'hidden'}}><div style={{height:'100%',width:`${p.pct}%`,background:COLORS[i%COLORS.length],borderRadius:'3px'}}/></div>
+                  <span style={{fontSize:'11px',color:'var(--chronos-text-muted)',flexShrink:0}}>{p.pct}%</span>
+                </div>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:'5px 16px',paddingLeft:'16px'}}>
+                {p.taskBreakdown.map((t,j)=>{
+                  const tpct=p.hours>0?Math.round((t.hours/p.hours)*100):0
+                  return(
+                    <div key={t.name} style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                      <div style={{width:'6px',height:'6px',borderRadius:'2px',background:COLORS[j%COLORS.length],flexShrink:0}}/>
+                      <span style={{fontSize:'11px',color:'var(--chronos-text-muted)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.name}</span>
+                      <span style={{fontFamily:'var(--font-mono)',fontSize:'11px',fontWeight:600,color:'var(--chronos-text)',flexShrink:0}}>{h(t.hours)}</span>
+                      <span style={{fontSize:'10px',color:'var(--chronos-text-muted)',flexShrink:0,minWidth:'28px',textAlign:'right'}}>{tpct}%</span>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
-          )})}
+          ))}
+        </div>
+
+        {/* People — each with project breakdown */}
+        <div className="card-base" style={{overflow:'hidden'}}>
+          <div style={{padding:'16px 20px',borderBottom:'1px solid var(--chronos-border)'}}>
+            <SecTitle title="Contributor Breakdown" sub="Each team member's hours and which projects they worked on for this client"/>
+          </div>
+          {byPerson.map((p,i)=>(
+            <div key={p.id} style={{padding:'16px 20px',borderBottom:i<byPerson.length-1?'1px solid var(--chronos-border)':'none'}}>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 120px 90px 120px',gap:'12px',alignItems:'center',marginBottom:'10px'}}>
+                <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+                  <div style={{width:'32px',height:'32px',borderRadius:'10px',background:`linear-gradient(135deg,${COLORS[i%COLORS.length]},${COLORS[(i+2)%COLORS.length]})`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'12px',fontWeight:700,color:'white',flexShrink:0}}>{p.name.split(' ').map((n:string)=>n[0]).join('').slice(0,2).toUpperCase()}</div>
+                  <div><div style={{fontWeight:600,fontSize:'13px',color:'var(--chronos-text)'}}>{p.name}</div><div style={{fontSize:'11px',color:'var(--chronos-text-muted)'}}>{p.dept||'—'}</div></div>
+                </div>
+                <span style={{fontFamily:'var(--font-mono)',fontSize:'14px',fontWeight:800,color:ACCENT}}>{h(p.hours)}</span>
+                <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                  <div style={{flex:1,height:'5px',borderRadius:'3px',background:'var(--chronos-surface-2)',overflow:'hidden'}}><div style={{height:'100%',width:`${p.pct}%`,background:COLORS[i%COLORS.length],borderRadius:'3px'}}/></div>
+                  <span style={{fontSize:'11px',color:'var(--chronos-text-muted)',flexShrink:0}}>{p.pct}%</span>
+                </div>
+                <span style={{fontSize:'11px',color:'var(--chronos-text-muted)'}}>of client total</span>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'5px 16px',paddingLeft:'42px'}}>
+                {p.projectBreakdown.map((pr,j)=>{
+                  const prpct=p.hours>0?Math.round((pr.hours/p.hours)*100):0
+                  return(
+                    <div key={pr.name} style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                      <div style={{width:'6px',height:'6px',borderRadius:'2px',background:COLORS[j%COLORS.length],flexShrink:0}}/>
+                      <span style={{fontSize:'11px',color:'var(--chronos-text-muted)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{pr.name}</span>
+                      <span style={{fontFamily:'var(--font-mono)',fontSize:'11px',fontWeight:600,color:'var(--chronos-text)',flexShrink:0}}>{h(pr.hours)}</span>
+                      <span style={{fontSize:'10px',color:'var(--chronos-text-muted)',flexShrink:0,minWidth:'28px',textAlign:'right'}}>{prpct}%</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     )
   }
 
+
   // ─── EMPLOYEES ───────────────────────────────────────────────────────────
   const EmployeesTab=()=>{
-    const empSummary=useMemo(()=>Object.entries(gby(logs,l=>l.user_id)).map(([uid,ls])=>({id:uid,name:ls[0].userName,department:ls[0].department,hours:sumH(ls),projects:new Set(ls.map(l=>l.project_id)).size,activeDays:new Set(ls.map(l=>l.log_date)).size})).sort((a,b)=>b.hours-a.hours),[])
+    const empSummary=Object.entries(gby(logs,l=>l.user_id)).map(([uid,ls])=>({
+      id:uid,name:ls[0].userName,department:ls[0].department,hours:sumH(ls),
+      projects:Object.keys(ls.reduce((m,l)=>{m[l.project_id]=true;return m},{} as Record<string,true>)).length,
+      activeDays:Object.keys(ls.reduce((m,l)=>{m[l.log_date]=true;return m},{} as Record<string,true>)).length,
+    })).sort((a,b)=>b.hours-a.hours)
     const empLogs=selEmployee?logs.filter(l=>l.user_id===selEmployee):[]
     const emp=profilesData.find(p=>p.id===selEmployee)
     const totalEH=sumH(empLogs)
@@ -548,26 +850,38 @@ export default function ReportsPage(){
       const maxH=empSummary[0]?.hours||1
       return(
         <div style={{display:'flex',flexDirection:'column',gap:'16px'}}>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'14px'}}><SCard icon={<Users size={20}/>} label="Contributors" value={empSummary.length}/><SCard icon={<Clock size={20}/>} label="Total Hours" value={h(totalHours)} color="#60a5fa"/><SCard icon={<TrendingUp size={20}/>} label="Avg per Person" value={h(empSummary.length?totalHours/empSummary.length:0)} color="#34d399"/></div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'14px'}}>
+            <SCard icon={<Users size={20}/>} label="Contributors" value={empSummary.length}/>
+            <SCard icon={<Clock size={20}/>} label="Total Hours" value={h(totalHours)} color="#60a5fa"/>
+            <SCard icon={<TrendingUp size={20}/>} label="Avg per Person" value={h(empSummary.length?totalHours/empSummary.length:0)} color="#34d399"/>
+          </div>
           {deptData.length>1&&<div className="card-base" style={{padding:'20px'}}>
             <SecTitle title="Hours by Department"/>
             <ResponsiveContainer width="100%" height={180}>
               <BarChart data={deptData} margin={{top:4,right:4,bottom:0,left:-10}}>
-                <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/><XAxis dataKey="name" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
-                <Tooltip {...TT} formatter={(v:number)=>[`${v.toFixed(1)}h`,'Hours']}/><Bar dataKey="hours" radius={[6,6,0,0]}>{deptData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Bar>
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/>
+                <XAxis dataKey="name" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+                <YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+                <Tooltip {...TT} formatter={(v:number)=>[`${v.toFixed(1)}h`,'Hours']}/>
+                <Bar dataKey="hours" radius={[6,6,0,0]}>{deptData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>}
-          {empSummary.length===0?<div className="card-base" style={{padding:'60px',textAlign:'center',color:'var(--chronos-text-muted)',fontSize:'14px'}}>No employee data</div>:
-            <div className="card-base" style={{overflow:'hidden'}}>
+          {empSummary.length===0
+            ?<div className="card-base" style={{padding:'60px',textAlign:'center',color:'var(--chronos-text-muted)',fontSize:'14px'}}>No employee data</div>
+            :<div className="card-base" style={{overflow:'hidden'}}>
               <div style={{padding:'12px 20px',borderBottom:'1px solid var(--chronos-border)',display:'grid',gridTemplateColumns:'1fr 120px 90px 90px 90px',gap:'10px'}}>
                 {['Employee','Department','Hours','Projects','Active Days'].map(hd=><span key={hd} style={{fontSize:'11px',fontWeight:700,color:'var(--chronos-text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}>{hd}</span>)}
               </div>
               {empSummary.map((e,i)=>(
-                <div key={e.id} className="table-row" onClick={()=>setSelEmployee(e.id)} style={{padding:'13px 20px',display:'grid',gridTemplateColumns:'1fr 120px 90px 90px 90px',gap:'10px',alignItems:'center',borderBottom:i<empSummary.length-1?'1px solid var(--chronos-border)':'none',cursor:'pointer'}}>
+                <div key={e.id} className="table-row" onClick={()=>setSelEmployee(e.id)}
+                  style={{padding:'13px 20px',display:'grid',gridTemplateColumns:'1fr 120px 90px 90px 90px',gap:'10px',alignItems:'center',borderBottom:i<empSummary.length-1?'1px solid var(--chronos-border)':'none',cursor:'pointer'}}>
                   <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
                     <div style={{width:'32px',height:'32px',borderRadius:'10px',background:`linear-gradient(135deg,${COLORS[i%COLORS.length]},${COLORS[(i+2)%COLORS.length]})`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'12px',fontWeight:700,color:'white',flexShrink:0}}>{e.name.split(' ').map((n:string)=>n[0]).join('').slice(0,2).toUpperCase()}</div>
-                    <div><div style={{fontWeight:600,fontSize:'13px',color:'var(--chronos-text)'}}>{e.name}</div><div style={{width:`${Math.round((e.hours/maxH)*80)}px`,height:'3px',background:COLORS[i%COLORS.length],borderRadius:'2px',marginTop:'4px',minWidth:'4px'}}/></div>
+                    <div>
+                      <div style={{fontWeight:600,fontSize:'13px',color:'var(--chronos-text)'}}>{e.name}</div>
+                      <div style={{width:`${Math.round((e.hours/maxH)*100)}px`,maxWidth:'120px',height:'3px',background:COLORS[i%COLORS.length],borderRadius:'2px',marginTop:'4px',minWidth:'4px'}}/>
+                    </div>
                   </div>
                   <span style={{fontSize:'12px',color:'var(--chronos-text-muted)'}}>{e.department||'—'}</span>
                   <span style={{fontFamily:'var(--font-mono)',fontSize:'13px',fontWeight:700,color:ACCENT}}>{h(e.hours)}</span>
@@ -581,43 +895,129 @@ export default function ReportsPage(){
       )
     }
 
-    const byProject=useMemo(()=>Object.entries(gby(empLogs,l=>l.project_id)).map(([pid,ls])=>({id:pid,name:ls[0].projectName,hours:sumH(ls)})).sort((a,b)=>b.hours-a.hours),[empLogs])
-    const byTask=useMemo(()=>Object.entries(gby(empLogs,l=>l.taskTypeName)).map(([n,ls])=>({name:n,hours:parseFloat(sumH(ls).toFixed(1))})).sort((a,b)=>b.hours-a.hours),[empLogs])
-    const empWeeks=useMemo(()=>{const ws=eachWeekOfInterval({start:pStart,end:pEnd>new Date()?new Date():pEnd},{weekStartsOn:1});return ws.map(w=>{const wE=endOfWeek(w,{weekStartsOn:1}),wS=format(w,'yyyy-MM-dd'),wES=format(wE,'yyyy-MM-dd');return{week:format(w,'MMM d'),hours:parseFloat(sumH(empLogs.filter(l=>l.log_date>=wS&&l.log_date<=wES)).toFixed(1))}});},[empLogs])
-    const radarData=byTask.slice(0,6).map(t=>({subject:t.name.length>12?t.name.slice(0,12)+'…':t.name,hours:t.hours,fullMark:byTask[0]?.hours||1}))
+    // ── employee detail ──
+    const byProject=Object.entries(gby(empLogs,l=>l.project_id)).map(([pid,ls])=>({id:pid,name:ls[0].projectName,hours:parseFloat(sumH(ls).toFixed(1)),pct:0,taskBreakdown:Object.entries(gby(ls,l=>l.taskTypeName)).map(([tn,tls])=>({name:tn,hours:parseFloat(sumH(tls).toFixed(1))})).sort((a,b)=>b.hours-a.hours)})).sort((a,b)=>b.hours-a.hours).map(p=>({...p,pct:totalEH>0?Math.round((p.hours/totalEH)*100):0}))
+    const byTask=Object.entries(gby(empLogs,l=>l.taskTypeName)).map(([n,ls])=>({name:n,hours:parseFloat(sumH(ls).toFixed(1)),pct:0})).sort((a,b)=>b.hours-a.hours).map(t=>({...t,pct:totalEH>0?Math.round((t.hours/totalEH)*100):0}))
+    const empWeeks=eachWeekOfInterval({start:pStart,end:pEnd>new Date()?new Date():pEnd},{weekStartsOn:1}).map(w=>{const wE=endOfWeek(w,{weekStartsOn:1}),wS=format(w,'yyyy-MM-dd'),wES=format(wE,'yyyy-MM-dd');return{week:format(w,'MMM d'),hours:parseFloat(sumH(empLogs.filter(l=>l.log_date>=wS&&l.log_date<=wES)).toFixed(1))}})
+    const radarData=byTask.slice(0,7).map(t=>({subject:t.name.length>14?t.name.slice(0,14)+'…':t.name,hours:t.hours,fullMark:byTask[0]?.hours||1}))
     const empTS=timesheets.filter(t=>t.user_id===selEmployee)
+    const activeDaysE=Object.keys(empLogs.reduce((m,l)=>{m[l.log_date]=true;return m},{} as Record<string,true>)).length
 
     return(
-      <div style={{display:'flex',flexDirection:'column',gap:'16px'}}>
+      <div style={{display:'flex',flexDirection:'column',gap:'20px'}}>
         <div style={{display:'flex',alignItems:'center',gap:'12px'}}>
           <button onClick={()=>setSelEmployee(null)} className="btn-secondary" style={{padding:'7px 12px',gap:'6px'}}><ArrowLeft size={13}/> All Employees</button>
-          <div><div style={{fontFamily:'var(--font-display)',fontSize:'18px',fontWeight:800}}>{emp?.full_name}</div><div style={{fontSize:'12px',color:'var(--chronos-text-muted)'}}>{emp?.department||'No dept'} · {pl}</div></div>
+          <div>
+            <div style={{fontFamily:'var(--font-display)',fontSize:'20px',fontWeight:800}}>{emp?.full_name}</div>
+            <div style={{fontSize:'12px',color:'var(--chronos-text-muted)',marginTop:'2px'}}>{emp?.department||'No dept'} · {pl}</div>
+          </div>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'14px'}}>
+
+        <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'12px'}}>
           <SCard icon={<Clock size={20}/>} label="Total Hours" value={h(totalEH)}/>
           <SCard icon={<FolderKanban size={20}/>} label="Projects" value={byProject.length} color="#60a5fa"/>
-          <SCard icon={<Calendar size={20}/>} label="Active Days" value={new Set(empLogs.map(l=>l.log_date)).size} color="#34d399"/>
+          <SCard icon={<Calendar size={20}/>} label="Active Days" value={activeDaysE} color="#34d399"/>
           <SCard icon={<Layers size={20}/>} label="Task Types" value={byTask.length} color="#fbbf24"/>
+          <SCard icon={<TrendingUp size={20}/>} label="Avg / Active Day" value={h(activeDaysE?totalEH/activeDaysE:0)} color="#e879f9"/>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 320px',gap:'16px'}}>
-          <div className="card-base" style={{padding:'20px'}}>
-            <SecTitle title="Weekly Hours" sub="Useful for appraisal and capacity planning"/>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={empWeeks} margin={{top:4,right:4,bottom:0,left:-10}}>
-                <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/><XAxis dataKey="week" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
-                <Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/><Bar dataKey="hours" radius={[6,6,0,0]}>{empWeeks.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          {radarData.length>=3&&<div className="card-base" style={{padding:'20px'}}>
-            <SecTitle title="Skill Distribution" sub="By task type — useful for appraisals"/>
-            <ResponsiveContainer width="100%" height={200}><RadarChart data={radarData}><PolarGrid stroke={GRID}/><PolarAngleAxis dataKey="subject" tick={{fontSize:10,fill:'#64748b'}}/><Radar name="Hours" dataKey="hours" stroke={ACCENT} fill={ACCENT} fillOpacity={0.25}/><Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/></RadarChart></ResponsiveContainer>
-          </div>}
+
+        {/* Weekly trend */}
+        <div className="card-base" style={{padding:'20px'}}>
+          <SecTitle title="Weekly Hours" sub="Hours logged per week — useful for capacity planning and appraisals"/>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={empWeeks} margin={{top:4,right:4,bottom:0,left:-10}}>
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/>
+              <XAxis dataKey="week" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+              <YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+              <Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/>
+              <Bar dataKey="hours" radius={[6,6,0,0]}>{empWeeks.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </div>
+
+        {/* Task type pie + radar */}
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'16px'}}>
-          <div className="card-base" style={{padding:'20px'}}><SecTitle title="By Project"/><div style={{display:'flex',flexDirection:'column',gap:'10px'}}>{byProject.map((p,i)=><MiniBar key={p.id} label={p.name} value={p.hours} max={byProject[0]?.hours||1} color={COLORS[i%COLORS.length]}/>)}</div></div>
-          <div className="card-base" style={{padding:'20px'}}><SecTitle title="By Task Type"/><div style={{display:'flex',flexDirection:'column',gap:'10px'}}>{byTask.map((t,i)=><MiniBar key={t.name} label={t.name} value={t.hours} max={byTask[0]?.hours||1} color={COLORS[i%COLORS.length]}/>)}</div></div>
+          <div className="card-base" style={{padding:'20px'}}>
+            <SecTitle title="Hours by Task Type" sub="What type of work this person does"/>
+            {byTask.length===0?<div style={{color:'var(--chronos-text-muted)',fontSize:'13px'}}>No task data</div>:<>
+              <ResponsiveContainer width="100%" height={190}>
+                <PieChart>
+                  <Pie data={byTask} dataKey="hours" nameKey="name" cx="50%" cy="50%" outerRadius={78} paddingAngle={2} label={({pct})=>`${pct}%`} labelLine={false}>
+                    {byTask.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                  </Pie>
+                  <Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/>
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{display:'flex',flexDirection:'column',borderTop:'1px solid var(--chronos-border)'}}>
+                {byTask.map((t,i)=>(
+                  <div key={t.name} style={{display:'grid',gridTemplateColumns:'12px 1fr 52px 44px',gap:'8px',alignItems:'center',padding:'7px 4px',borderBottom:i<byTask.length-1?'1px solid var(--chronos-border)':''}}>
+                    <div style={{width:'10px',height:'10px',borderRadius:'3px',background:COLORS[i%COLORS.length]}}/>
+                    <span style={{fontSize:'12px',color:'var(--chronos-text)',fontWeight:500}}>{t.name}</span>
+                    <span style={{fontFamily:'var(--font-mono)',fontSize:'12px',fontWeight:700,color:ACCENT,textAlign:'right'}}>{h(t.hours)}</span>
+                    <span style={{fontSize:'11px',color:'var(--chronos-text-muted)',textAlign:'right'}}>{t.pct}%</span>
+                  </div>
+                ))}
+              </div>
+            </>}
+          </div>
+
+          {radarData.length>=3
+            ?<div className="card-base" style={{padding:'20px'}}>
+              <SecTitle title="Skill Radar" sub="Task type distribution — useful for appraisals and role fit"/>
+              <ResponsiveContainer width="100%" height={190}>
+                <RadarChart data={radarData}>
+                  <PolarGrid stroke={GRID}/>
+                  <PolarAngleAxis dataKey="subject" tick={{fontSize:10,fill:'#64748b'}}/>
+                  <Radar name="Hours" dataKey="hours" stroke={ACCENT} fill={ACCENT} fillOpacity={0.25}/>
+                  <Tooltip {...TT} formatter={(v:number)=>[`${v}h`,'Hours']}/>
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+            :<div className="card-base" style={{padding:'20px'}}>
+              <SecTitle title="Projects" sub="Hours per project"/>
+              <div style={{display:'flex',flexDirection:'column',gap:'10px',marginTop:'4px'}}>
+                {byProject.map((p,i)=><MiniBar key={p.id} label={p.name} value={p.hours} max={byProject[0]?.hours||1} color={COLORS[i%COLORS.length]}/>)}
+              </div>
+            </div>
+          }
         </div>
+
+        {/* Per-project breakdown with task detail */}
+        <div className="card-base" style={{overflow:'hidden'}}>
+          <div style={{padding:'16px 20px',borderBottom:'1px solid var(--chronos-border)'}}>
+            <SecTitle title="Project Breakdown" sub="Hours per project and which task types were worked on within each"/>
+          </div>
+          {byProject.map((p,i)=>(
+            <div key={p.id} style={{padding:'16px 20px',borderBottom:i<byProject.length-1?'1px solid var(--chronos-border)':'none'}}>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 90px 120px',gap:'12px',alignItems:'center',marginBottom:'10px'}}>
+                <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+                  <div style={{width:'8px',height:'8px',borderRadius:'50%',background:COLORS[i%COLORS.length],flexShrink:0}}/>
+                  <span style={{fontWeight:700,fontSize:'13px',color:'var(--chronos-text)'}}>{p.name}</span>
+                </div>
+                <span style={{fontFamily:'var(--font-mono)',fontSize:'14px',fontWeight:800,color:ACCENT}}>{h(p.hours)}</span>
+                <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                  <div style={{flex:1,height:'5px',borderRadius:'3px',background:'var(--chronos-surface-2)',overflow:'hidden'}}><div style={{height:'100%',width:`${p.pct}%`,background:COLORS[i%COLORS.length],borderRadius:'3px'}}/></div>
+                  <span style={{fontSize:'11px',color:'var(--chronos-text-muted)',flexShrink:0}}>{p.pct}%</span>
+                </div>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:'5px 16px',paddingLeft:'16px'}}>
+                {p.taskBreakdown.map((t,j)=>{
+                  const tpct=p.hours>0?Math.round((t.hours/p.hours)*100):0
+                  return(
+                    <div key={t.name} style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                      <div style={{width:'6px',height:'6px',borderRadius:'2px',background:COLORS[j%COLORS.length],flexShrink:0}}/>
+                      <span style={{fontSize:'11px',color:'var(--chronos-text-muted)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.name}</span>
+                      <span style={{fontFamily:'var(--font-mono)',fontSize:'11px',fontWeight:600,color:'var(--chronos-text)',flexShrink:0}}>{h(t.hours)}</span>
+                      <span style={{fontSize:'10px',color:'var(--chronos-text-muted)',flexShrink:0,minWidth:'28px',textAlign:'right'}}>{tpct}%</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Timesheets */}
         {empTS.length>0&&<div className="card-base" style={{overflow:'hidden'}}>
           <div style={{padding:'12px 20px',borderBottom:'1px solid var(--chronos-border)',display:'grid',gridTemplateColumns:'1.4fr 1fr 100px 80px',gap:'12px'}}>
             {['Week','Submitted','Status','Hours'].map(hd=><span key={hd} style={{fontSize:'11px',fontWeight:700,color:'var(--chronos-text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}>{hd}</span>)}
@@ -634,6 +1034,7 @@ export default function ReportsPage(){
       </div>
     )
   }
+
 
   const exportLabel=()=>{
     if(tab==='projects'&&selProject)return'Export Project'
@@ -656,12 +1057,12 @@ export default function ReportsPage(){
         </div>
       </div>
       <div style={{display:'flex',gap:'4px',background:'var(--chronos-surface-2)',borderRadius:'10px',padding:'4px',width:'fit-content'}}>
-        {(['overview','projects','clients',...(canManageProjects?['employees']:[])] as Tab[]).map(t=><button key={t} style={tabSt(t)} onClick={()=>setTab(t)}>{t[0].toUpperCase()+t.slice(1)}</button>)}
+        {(['overview','clients','projects',...(canManageProjects?['employees']:[])] as Tab[]).map(t=><button key={t} style={tabSt(t)} onClick={()=>setTab(t)}>{t[0].toUpperCase()+t.slice(1)}</button>)}
       </div>
       {loading?<div style={{display:'flex',justifyContent:'center',padding:'80px'}}><div style={{width:'28px',height:'28px',border:`3px solid var(--chronos-border)`,borderTopColor:ACCENT,borderRadius:'50%',animation:'spin 0.8s linear infinite'}}/></div>:<>
         {tab==='overview'&&<OverviewTab/>}
-        {tab==='projects'&&<ProjectsTab/>}
         {tab==='clients'&&<ClientsTab/>}
+        {tab==='projects'&&<ProjectsTab/>}
         {tab==='employees'&&canManageProjects&&<EmployeesTab/>}
       </>}
     </div>
