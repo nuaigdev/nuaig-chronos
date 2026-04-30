@@ -254,7 +254,6 @@ export default function ReportsPage() {
       rows = projectStats.map(p => ({
         Project: p.name, Status: p.status, 'Hours Logged': p.hours,
         'Estimated Hours': p.estimated_hours ?? '', 'Budget Used %': p.hoursPct != null ? `${p.hoursPct}%` : '',
-        'Total Tasks': p.taskTotal, 'Completed Tasks': p.taskDone, 'Completion %': `${p.taskPct}%`,
       }))
     } else {
       filename = `timesheets_${period}_${format(new Date(), 'yyyy-MM-dd')}`

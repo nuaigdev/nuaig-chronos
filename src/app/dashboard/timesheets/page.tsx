@@ -649,6 +649,7 @@ export default function TimesheetsPage() {
       {/* ── Log Time Modal ── */}
       {showModal && (
         <Modal
+          isOpen={showModal}
           title={editLog ? 'Edit Time Log' : 'Log Time'}
           onClose={() => setShowModal(false)}
         >
