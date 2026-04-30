@@ -172,23 +172,24 @@ export default function TeamPage() {
 
     setSaving(true)
     try {
-      const { data, error } = await supabase.rpc('admin_create_user', {
-        user_email: addForm.email.trim().toLowerCase(),
-        user_password: addForm.password,
-        user_name: addForm.full_name.trim(),
-        user_role: addForm.role,
-        user_dept: addForm.department || null,
+      const res = await fetch('/api/admin/create-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_email: addForm.email.trim().toLowerCase(),
+          user_password: addForm.password,
+          user_name: addForm.full_name.trim(),
+          user_role: addForm.role,
+          user_dept: addForm.department || null,
+          // manager_id only sent for manager role
+          manager_id: addForm.role === 'manager' ? (addForm.manager_id || null) : null,
+        }),
       })
-
-      if (error) throw error
-      if (data && !data.success) throw new Error(data.error)
-
-      // For managers only: optionally set their direct manager_id
-      if (data?.user_id && addForm.role === 'manager' && addForm.manager_id) {
-        await supabase.from('profiles').update({ manager_id: addForm.manager_id }).eq('id', data.user_id)
-      }
+      const data = await res.json()
+      if (!res.ok || !data.success) throw new Error(data.error ?? 'Failed to create user')
 
       toast.success(`${addForm.full_name} added successfully!`)
+      if (data.warning) toast.error(data.warning)
       setModalMode(null)
       fetchData()
     } catch (err: unknown) {

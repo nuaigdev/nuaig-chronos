@@ -26,7 +26,6 @@ const QUICK_ACTIONS: Record<string, { label: string; href: string }> = {
   '/dashboard/tasks': { label: 'New Task', href: '/dashboard/tasks/new' },
   '/dashboard/time-logs': { label: 'Log Time', href: '/dashboard/time-logs/new' },
   '/dashboard/clients': { label: 'New Client', href: '/dashboard/clients/new' },
-  '/dashboard/team': { label: 'Add Member', href: '/dashboard/team/new' },
 }
 
 export default function TopBar() {
