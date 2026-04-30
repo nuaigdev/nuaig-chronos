@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
-import { Profile, Department, DEPARTMENT_LABELS, TaskType } from '@/types'
+import { Profile, DeptRow, TaskType } from '@/types'
 import { EmptyState, Modal, FormField, Select } from '@/components/ui'
 import { getInitials } from '@/utils'
 import { Building2, Users, ChevronDown, ChevronRight, UserCog, Plus, Tag, Pencil } from 'lucide-react'
@@ -11,20 +11,6 @@ import toast from 'react-hot-toast'
 import { useRouter } from 'next/navigation'
 
 const supabase = createClient()
-
-interface DeptRow {
-  id: string
-  name: Department
-  display_name: string
-  description: string | null
-  manager_id: string | null
-  is_active: boolean
-  manager?: Profile
-}
-
-interface DeptMember extends Profile {
-  // member of this department
-}
 
 export default function DepartmentsPage() {
   const { isAdmin, profileReady } = useAuth()
@@ -35,6 +21,11 @@ export default function DepartmentsPage() {
   const [taskTypes, setTaskTypes] = useState<TaskType[]>([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
+
+  // Create department modal
+  const [createModal, setCreateModal] = useState(false)
+  const [createForm, setCreateForm] = useState({ name: '', display_name: '', description: '' })
+  const [creating, setCreating] = useState(false)
 
   // Manager modal
   const [managerModal, setManagerModal] = useState<DeptRow | null>(null)
@@ -72,6 +63,41 @@ export default function DepartmentsPage() {
     if (!profileReady || !isAdmin) return
     fetchData()
   }, [profileReady, isAdmin, fetchData])
+
+  // ── Create department ─────────────────────────────────────────────────────
+
+  const openCreateModal = () => {
+    setCreateForm({ name: '', display_name: '', description: '' })
+    setCreateModal(true)
+  }
+
+  const handleCreate = async () => {
+    if (!createForm.name.trim()) { toast.error('Department code/name is required'); return }
+    if (!createForm.display_name.trim()) { toast.error('Display name is required'); return }
+
+    // Validate: name must be alphanumeric (used as the dept key)
+    if (!/^[A-Za-z0-9_-]+$/.test(createForm.name.trim())) {
+      toast.error('Department code must be alphanumeric (letters, numbers, _ or -)')
+      return
+    }
+
+    setCreating(true)
+    try {
+      const { error } = await supabase.from('departments').insert({
+        name: createForm.name.trim().toUpperCase(),
+        display_name: createForm.display_name.trim(),
+        description: createForm.description.trim() || null,
+      })
+      if (error) throw error
+      toast.success(`Department "${createForm.display_name}" created`)
+      setCreateModal(false)
+      fetchData()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Error creating department')
+    } finally {
+      setCreating(false)
+    }
+  }
 
   // ── Manager assignment ────────────────────────────────────────────────────
 
@@ -139,6 +165,7 @@ export default function DepartmentsPage() {
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
+  // A manager can manage many departments — we list all managers/admins
   const managerOptions = [
     { value: '', label: 'No manager' },
     ...members
@@ -146,10 +173,10 @@ export default function DepartmentsPage() {
       .map(m => ({ value: m.id, label: `${m.full_name} (${m.role})` })),
   ]
 
-  const getDeptMembers = (deptName: Department): DeptMember[] =>
+  const getDeptMembers = (deptName: string): Profile[] =>
     members.filter(m => m.department === deptName)
 
-  const getDeptTaskTypes = (deptName: Department): TaskType[] =>
+  const getDeptTaskTypes = (deptName: string): TaskType[] =>
     taskTypes.filter(t => t.department === deptName)
 
   if (loading) {
@@ -162,11 +189,20 @@ export default function DepartmentsPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <div>
-        <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Departments</h1>
-        <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>
-          Manage department structure, managers, members and task types
-        </p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div>
+          <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Departments</h1>
+          <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>
+            Manage department structure, managers, members and task types
+          </p>
+        </div>
+        <button
+          className="btn-primary"
+          onClick={openCreateModal}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}
+        >
+          <Plus size={14} />New Department
+        </button>
       </div>
 
       {/* Summary bar */}
@@ -186,7 +222,7 @@ export default function DepartmentsPage() {
       </div>
 
       {departments.length === 0 ? (
-        <EmptyState icon={<Building2 size={28} />} title="No departments found" description="Run migration 008 to seed department rows." />
+        <EmptyState icon={<Building2 size={28} />} title="No departments found" description="Create your first department using the button above." />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {departments.map(dept => {
@@ -209,8 +245,11 @@ export default function DepartmentsPage() {
                   <div style={{ flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '15px' }}>{dept.name}</span>
-                      <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>— {DEPARTMENT_LABELS[dept.name] || dept.display_name}</span>
+                      <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>— {dept.display_name}</span>
                     </div>
+                    {dept.description && (
+                      <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '2px' }}>{dept.description}</div>
+                    )}
                     <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '3px', display: 'flex', gap: '14px' }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <Users size={11} />{deptMembers.length} member{deptMembers.length !== 1 ? 's' : ''}
@@ -270,6 +309,15 @@ export default function DepartmentsPage() {
                                   <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--chronos-text)' }}>{m.full_name}</div>
                                   <div style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', textTransform: 'capitalize' }}>{m.role}</div>
                                 </div>
+                                {/* Show this member's own manager if set */}
+                                {m.manager_id && (() => {
+                                  const mgr = members.find(x => x.id === m.manager_id)
+                                  return mgr ? (
+                                    <span style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--chronos-text-muted)' }}>
+                                      → {mgr.full_name}
+                                    </span>
+                                  ) : null
+                                })()}
                               </div>
                             ))}
                           </div>
@@ -322,11 +370,55 @@ export default function DepartmentsPage() {
         </div>
       )}
 
+      {/* ── Create Department Modal ── */}
+      <Modal isOpen={createModal} onClose={() => setCreateModal(false)} title="Create Department" size="sm">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <FormField label="Department Code *">
+            <input
+              className="input-base"
+              placeholder="e.g. DESIGN"
+              value={createForm.name}
+              onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))}
+            />
+            <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '4px' }}>
+              Short identifier, e.g. DESIGN or FINANCE. Will be uppercased.
+            </p>
+          </FormField>
+          <FormField label="Display Name *">
+            <input
+              className="input-base"
+              placeholder="e.g. Design & UX"
+              value={createForm.display_name}
+              onChange={e => setCreateForm(f => ({ ...f, display_name: e.target.value }))}
+            />
+            <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '4px' }}>
+              Full readable name shown throughout the app.
+            </p>
+          </FormField>
+          <FormField label="Description">
+            <input
+              className="input-base"
+              placeholder="Optional — what this department does"
+              value={createForm.description}
+              onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))}
+            />
+          </FormField>
+          <div style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.2)', fontSize: '12px', color: 'var(--chronos-accent)' }}>
+            After creating a department you can assign a manager and add task types by expanding the row.
+          </div>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn-secondary" onClick={() => setCreateModal(false)}>Cancel</button>
+            <button className="btn-primary" onClick={handleCreate} disabled={creating}>{creating ? 'Creating…' : 'Create Department'}</button>
+          </div>
+        </div>
+      </Modal>
+
       {/* ── Manager Modal ── */}
       <Modal isOpen={!!managerModal} onClose={() => setManagerModal(null)} title={`Set Manager — ${managerModal?.name}`} size="sm">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <p style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>
-            Select the manager for the <strong>{managerModal?.name}</strong> department. Only users with Manager or Admin role are listed.
+            Select the manager for the <strong>{managerModal?.name}</strong> department.
+            Only users with Manager or Admin role are listed. A single person can manage multiple departments.
           </p>
           <FormField label="Department Manager">
             <Select
@@ -337,7 +429,7 @@ export default function DepartmentsPage() {
             />
           </FormField>
           <div style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.2)', fontSize: '12px', color: 'var(--chronos-accent)' }}>
-            Note: This sets the department's manager. Individual employees' direct managers are managed separately on the Team page (manager_id on the profile).
+            Note: This sets the department's responsible manager. Individual employees' direct line managers are managed separately on the Team page.
           </div>
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
             <button className="btn-secondary" onClick={() => setManagerModal(null)}>Cancel</button>

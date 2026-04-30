@@ -14,10 +14,11 @@ export type NotificationType =
   | 'timesheet_reminder'
   | 'pending_approval_alert'
 
-// Fixed departments — must stay in sync with the DB enum department_type
-export type Department = 'COE' | 'Project' | 'HR' | 'Marketing' | 'BA' | 'Data'
+// Department is now a free-text string (migration 009 dropped the enum).
+// The six seed values are kept as a convenience constant but the type is open.
+export type Department = string
 
-export const DEPARTMENT_LABELS: Record<Department, string> = {
+export const DEPARTMENT_LABELS: Record<string, string> = {
   COE: 'Centre of Excellence',
   Project: 'Project',
   HR: 'Human Resources',
@@ -26,7 +27,7 @@ export const DEPARTMENT_LABELS: Record<Department, string> = {
   Data: 'Data',
 }
 
-export const DEPARTMENTS: Department[] = ['COE', 'Project', 'HR', 'Marketing', 'BA', 'Data']
+export const DEPARTMENTS: string[] = ['COE', 'Project', 'HR', 'Marketing', 'BA', 'Data']
 
 // ============================================
 // DATABASE TYPES
@@ -38,7 +39,7 @@ export interface Profile {
   full_name: string
   avatar_url?: string
   role: UserRole
-  department?: Department
+  department?: string
   manager_id?: string
   is_active: boolean
   created_at: string
@@ -46,6 +47,19 @@ export interface Profile {
   // Joined
   manager?: Profile
   reports?: Profile[]
+}
+
+export interface DeptRow {
+  id: string
+  name: string
+  display_name: string
+  description: string | null
+  manager_id: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  // Joined
+  manager?: Profile
 }
 
 export interface Client {
@@ -120,7 +134,7 @@ export interface Task {
 // Master task type row (department-scoped)
 export interface TaskType {
   id: string
-  department: Department
+  department: string
   name: string
   description?: string
   is_active: boolean
@@ -277,6 +291,12 @@ export interface CreateClientForm {
   notes?: string
 }
 
+export interface CreateDepartmentForm {
+  name: string
+  display_name: string
+  description?: string
+}
+
 // ============================================
 // DB ROW TYPES
 // ============================================
@@ -287,7 +307,7 @@ interface ProfileRow {
   full_name: string
   avatar_url: string | null
   role: UserRole
-  department: Department | null
+  department: string | null
   manager_id: string | null
   is_active: boolean
   created_at: string
@@ -334,7 +354,7 @@ interface ProjectMemberRow {
 
 interface TaskTypeRow {
   id: string
-  department: Department
+  department: string
   name: string
   description: string | null
   is_active: boolean
@@ -399,6 +419,17 @@ interface AdminSettingRow {
   updated_at: string
 }
 
+interface DepartmentRow {
+  id: string
+  name: string
+  display_name: string
+  description: string | null
+  manager_id: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
 // ============================================
 // SUPABASE DATABASE TYPE
 // ============================================
@@ -414,7 +445,7 @@ export interface Database {
           full_name: string
           avatar_url?: string | null
           role?: UserRole
-          department?: Department | null
+          department?: string | null
           manager_id?: string | null
           is_active?: boolean
         }
@@ -466,7 +497,7 @@ export interface Database {
       task_types: {
         Row: TaskTypeRow
         Insert: {
-          department: Department
+          department: string
           name: string
           description?: string | null
           is_active?: boolean
@@ -537,6 +568,18 @@ export interface Database {
           updated_by?: string | null
         }
         Update: Partial<AdminSettingRow>
+        Relationships: []
+      }
+      departments: {
+        Row: DepartmentRow
+        Insert: {
+          name: string
+          display_name: string
+          description?: string | null
+          manager_id?: string | null
+          is_active?: boolean
+        }
+        Update: Partial<DepartmentRow>
         Relationships: []
       }
     }
