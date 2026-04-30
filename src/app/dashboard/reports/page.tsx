@@ -373,22 +373,6 @@ export default function ReportsPage(){
           {ps.length===0
             ?<div className="card-base" style={{padding:'60px',textAlign:'center',color:'var(--chronos-text-muted)',fontSize:'14px'}}>No project data for this period</div>
             :<>
-              {/* bar chart */}
-              <div className="card-base" style={{padding:'20px'}}>
-                <SecTitle title="Hours per Project" sub="Click a bar or row to open project detail"/>
-                <ResponsiveContainer width="100%" height={240}>
-                  <BarChart data={ps.slice(0,12)} margin={{top:4,right:4,bottom:32,left:-10}}
-                    onClick={d=>d?.activePayload&&setSelProject(ps.find(p=>p.name===d.activePayload![0].payload.name)?.id||null)}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/>
-                    <XAxis dataKey="name" tick={{fontSize:10,fill:'#64748b'}} axisLine={false} tickLine={false} interval={0} angle={-25} textAnchor="end"/>
-                    <YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
-                    <Tooltip {...TT} formatter={(v:number)=>[`${v.toFixed(1)}h`,'Hours']} cursor={{fill:'rgba(167,139,250,0.08)',cursor:'pointer'}}/>
-                    <Bar dataKey="hours" radius={[6,6,0,0]} style={{cursor:'pointer'}}>
-                      {ps.slice(0,12).map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
               {/* project list */}
               <div className="card-base" style={{overflow:'hidden'}}>
                 <div style={{padding:'12px 20px',borderBottom:'1px solid var(--chronos-border)',display:'grid',gridTemplateColumns:'1fr 130px 80px 90px 120px 60px',gap:'10px'}}>
@@ -415,6 +399,22 @@ export default function ReportsPage(){
                     </div>
                   )
                 })}
+              </div>
+              {/* bar chart */}
+              <div className="card-base" style={{padding:'20px'}}>
+                <SecTitle title="Hours per Project" sub="Click a bar or row to open project detail"/>
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={ps.slice(0,12)} margin={{top:4,right:4,bottom:32,left:-10}}
+                    onClick={d=>d?.activePayload&&setSelProject(ps.find(p=>p.name===d.activePayload![0].payload.name)?.id||null)}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/>
+                    <XAxis dataKey="name" tick={{fontSize:10,fill:'#64748b'}} axisLine={false} tickLine={false} interval={0} angle={-25} textAnchor="end"/>
+                    <YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+                    <Tooltip {...TT} formatter={(v:number)=>[`${v.toFixed(1)}h`,'Hours']} cursor={{fill:'rgba(167,139,250,0.08)',cursor:'pointer'}}/>
+                    <Bar dataKey="hours" radius={[6,6,0,0]} style={{cursor:'pointer'}}>
+                      {ps.slice(0,12).map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
             </>
           }
@@ -623,21 +623,6 @@ export default function ReportsPage(){
           {cSummary.length===0
             ?<div className="card-base" style={{padding:'60px',textAlign:'center',color:'var(--chronos-text-muted)',fontSize:'14px'}}>No client data for this period</div>
             :<>
-              <div className="card-base" style={{padding:'20px'}}>
-                <SecTitle title="Hours per Client" sub="Click a bar or row to open client detail"/>
-                <ResponsiveContainer width="100%" height={Math.max(180,cSummary.length*48)}>
-                  <BarChart data={cSummary} layout="vertical" margin={{top:0,right:16,bottom:0,left:100}}
-                    onClick={d=>d?.activePayload&&setSelClient(cSummary.find(c=>c.name===d.activePayload![0].payload.name)?.id||null)}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={GRID} horizontal={false}/>
-                    <XAxis type="number" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
-                    <YAxis type="category" dataKey="name" tick={{fontSize:12,fill:'#94a3b8'}} axisLine={false} tickLine={false} width={96}/>
-                    <Tooltip {...TT} formatter={(v:number)=>[`${v.toFixed(1)}h`,'Hours']} cursor={{fill:'rgba(167,139,250,0.06)',cursor:'pointer'}}/>
-                    <Bar dataKey="hours" radius={[0,6,6,0]} style={{cursor:'pointer'}}>
-                      {cSummary.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
               <div className="card-base" style={{overflow:'hidden'}}>
                 <div style={{padding:'12px 20px',borderBottom:'1px solid var(--chronos-border)',display:'grid',gridTemplateColumns:'1fr 100px 90px 90px',gap:'12px'}}>
                   {['Client','Hours','Projects','People'].map(hd=><span key={hd} style={{fontSize:'11px',fontWeight:700,color:'var(--chronos-text-muted)',textTransform:'uppercase',letterSpacing:'0.05em'}}>{hd}</span>)}
@@ -654,6 +639,21 @@ export default function ReportsPage(){
                     <span style={{fontSize:'13px',color:'var(--chronos-text-muted)'}}>{c.people}</span>
                   </div>
                 ))}
+              </div>
+              <div className="card-base" style={{padding:'20px'}}>
+                <SecTitle title="Hours per Client" sub="Click a bar or row to open client detail"/>
+                <ResponsiveContainer width="100%" height={Math.max(180,cSummary.length*48)}>
+                  <BarChart data={cSummary} layout="vertical" margin={{top:0,right:16,bottom:0,left:100}}
+                    onClick={d=>d?.activePayload&&setSelClient(cSummary.find(c=>c.name===d.activePayload![0].payload.name)?.id||null)}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={GRID} horizontal={false}/>
+                    <XAxis type="number" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+                    <YAxis type="category" dataKey="name" tick={{fontSize:12,fill:'#94a3b8'}} axisLine={false} tickLine={false} width={96}/>
+                    <Tooltip {...TT} formatter={(v:number)=>[`${v.toFixed(1)}h`,'Hours']} cursor={{fill:'rgba(167,139,250,0.06)',cursor:'pointer'}}/>
+                    <Bar dataKey="hours" radius={[0,6,6,0]} style={{cursor:'pointer'}}>
+                      {cSummary.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
             </>
           }
