@@ -3,13 +3,18 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
-import { Profile } from '@/types'
+import { Profile, Department, DEPARTMENTS, DEPARTMENT_LABELS } from '@/types'
 import { EmptyState, Modal, FormField, Select } from '@/components/ui'
 import { getRoleColor, getInitials } from '@/utils'
-import { Users, Plus, Search, Edit2, UserCheck, UserX } from 'lucide-react'
+import { Users, Search, Edit2, UserCheck, UserX } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const supabase = createClient()
+
+const DEPARTMENT_OPTIONS = [
+  { value: '', label: 'No department' },
+  ...DEPARTMENTS.map(d => ({ value: d, label: `${d} — ${DEPARTMENT_LABELS[d]}` })),
+]
 
 export default function TeamPage() {
   const { profile, isAdmin } = useAuth()
@@ -46,7 +51,7 @@ export default function TeamPage() {
       const { error } = await supabase.from('profiles').update({
         full_name: form.full_name,
         role: form.role as Profile['role'],
-        department: form.department || null,
+        department: (form.department as Department) || null,
         manager_id: form.manager_id || null,
       }).eq('id', editMember.id)
       if (error) throw error
@@ -136,6 +141,7 @@ export default function TeamPage() {
             <tbody>
               {filtered.map(m => {
                 const manager = members.find(x => x.id === m.manager_id)
+                const deptLabel = m.department ? `${m.department} — ${DEPARTMENT_LABELS[m.department as Department] || m.department}` : '—'
                 return (
                   <tr key={m.id} className="table-row">
                     <td style={{ padding: '14px 16px' }}>
@@ -152,7 +158,7 @@ export default function TeamPage() {
                     <td style={{ padding: '14px 16px' }}>
                       <span className={`status-badge ${getRoleColor(m.role)}`} style={{ textTransform: 'capitalize' }}>{m.role}</span>
                     </td>
-                    <td style={{ padding: '14px 16px', fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{m.department || '—'}</td>
+                    <td style={{ padding: '14px 16px', fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{deptLabel}</td>
                     <td style={{ padding: '14px 16px', fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{manager?.full_name || '—'}</td>
                     <td style={{ padding: '14px 16px' }}>
                       <span style={{ fontSize: '12px', color: m.is_active ? 'var(--chronos-success)' : 'var(--chronos-text-muted)' }}>
@@ -193,7 +199,12 @@ export default function TeamPage() {
             <Select value={form.role} onChange={v => setForm(f => ({ ...f, role: v }))} options={[{ value: 'admin', label: 'Admin' }, { value: 'manager', label: 'Manager' }, { value: 'employee', label: 'Employee' }]} />
           </FormField>
           <FormField label="Department">
-            <input className="input-base" placeholder="e.g. Engineering" value={form.department} onChange={e => setForm(f => ({ ...f, department: e.target.value }))} />
+            <Select
+              value={form.department}
+              onChange={v => setForm(f => ({ ...f, department: v }))}
+              options={DEPARTMENT_OPTIONS}
+              placeholder="Select department…"
+            />
           </FormField>
           <FormField label="Manager">
             <Select value={form.manager_id} onChange={v => setForm(f => ({ ...f, manager_id: v }))} options={managers.filter(m => m.id !== editMember?.id).map(m => ({ value: m.id, label: m.full_name }))} placeholder="No manager" />

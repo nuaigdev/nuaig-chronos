@@ -29,9 +29,6 @@ interface ProjectStat {
   status: string
   hours: number
   estimated_hours: number | null
-  taskTotal: number
-  taskDone: number
-  taskPct: number
   hoursPct: number | null
 }
 
@@ -151,29 +148,19 @@ export default function ReportsPage() {
       }))
       setEnrichedLogs(enriched)
 
-      // PROJECT STATS — hours + tasks
+      // PROJECT STATS — hours only (tasks replaced by task_types in new model)
       if (projIds.length > 0) {
-        const { data: taskData } = await supabase.from('tasks').select('project_id, status').in('project_id', projIds)
-        const taskMap: Record<string, { total: number; done: number }> = {}
-        for (const t of (taskData || []) as { project_id: string; status: string }[]) {
-          if (!taskMap[t.project_id]) taskMap[t.project_id] = { total: 0, done: 0 }
-          taskMap[t.project_id].total++
-          if (t.status === 'completed') taskMap[t.project_id].done++
-        }
         const hoursPerProject: Record<string, number> = {}
         for (const l of enriched) hoursPerProject[l.project_id] = (hoursPerProject[l.project_id] || 0) + l.hours
 
         setProjectStats(
           projIds.map(pid => {
             const proj = projMap[pid]
-            const tasks = taskMap[pid] || { total: 0, done: 0 }
             const hours = hoursPerProject[pid] || 0
             const est = proj?.estimated_hours ?? null
             return {
               id: pid, name: proj?.name || 'Unknown', status: proj?.status || 'unknown',
               hours, estimated_hours: est,
-              taskTotal: tasks.total, taskDone: tasks.done,
-              taskPct: tasks.total > 0 ? Math.round((tasks.done / tasks.total) * 100) : 0,
               hoursPct: est ? Math.round((hours / est) * 100) : null,
             }
           }).sort((a, b) => b.hours - a.hours)
@@ -472,13 +459,13 @@ export default function ReportsPage() {
                   </div>
 
                   <div className="card-base" style={{ overflow: 'hidden' }}>
-                    <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--chronos-border)', display: 'grid', gridTemplateColumns: '1fr 80px 100px 130px 120px', gap: '12px' }}>
-                      {['Project', 'Status', 'Hours', 'Budget Used', 'Task Progress'].map(h => (
+                    <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--chronos-border)', display: 'grid', gridTemplateColumns: '1fr 80px 100px 160px', gap: '12px' }}>
+                      {['Project', 'Status', 'Hours', 'Budget Used'].map(h => (
                         <span key={h} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</span>
                       ))}
                     </div>
                     {projectStats.map((p, i) => (
-                      <div key={p.id} className="table-row" style={{ padding: '14px 20px', display: 'grid', gridTemplateColumns: '1fr 80px 100px 130px 120px', gap: '12px', alignItems: 'center', borderBottom: i < projectStats.length - 1 ? '1px solid var(--chronos-border)' : 'none' }}>
+                      <div key={p.id} className="table-row" style={{ padding: '14px 20px', display: 'grid', gridTemplateColumns: '1fr 80px 100px 160px', gap: '12px', alignItems: 'center', borderBottom: i < projectStats.length - 1 ? '1px solid var(--chronos-border)' : 'none' }}>
                         <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--chronos-text)' }}>{p.name}</span>
                         <span style={{ fontSize: '11px', padding: '3px 8px', borderRadius: '100px', background: 'var(--chronos-surface-2)', color: 'var(--chronos-text-muted)', width: 'fit-content', textTransform: 'capitalize' }}>{p.status}</span>
                         <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: ACCENT }}>{p.hours.toFixed(1)}h</span>
@@ -494,20 +481,6 @@ export default function ReportsPage() {
                             </>
                           ) : (
                             <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>No estimate</span>
-                          )}
-                        </div>
-                        <div>
-                          {p.taskTotal > 0 ? (
-                            <>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-                                <span style={{ fontSize: '11px', color: 'var(--chronos-text-muted)' }}>{p.taskDone}/{p.taskTotal} ({p.taskPct}%)</span>
-                              </div>
-                              <div style={{ height: '4px', borderRadius: '2px', background: 'var(--chronos-surface-2)', overflow: 'hidden' }}>
-                                <div style={{ height: '100%', borderRadius: '2px', width: `${p.taskPct}%`, background: '#34d399' }} />
-                              </div>
-                            </>
-                          ) : (
-                            <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>No tasks</span>
                           )}
                         </div>
                       </div>

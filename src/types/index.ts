@@ -14,6 +14,20 @@ export type NotificationType =
   | 'timesheet_reminder'
   | 'pending_approval_alert'
 
+// Fixed departments — must stay in sync with the DB enum department_type
+export type Department = 'COE' | 'Project' | 'HR' | 'Marketing' | 'BA' | 'Data'
+
+export const DEPARTMENT_LABELS: Record<Department, string> = {
+  COE: 'Centre of Excellence',
+  Project: 'Project',
+  HR: 'Human Resources',
+  Marketing: 'Marketing',
+  BA: 'Business Analysts',
+  Data: 'Data',
+}
+
+export const DEPARTMENTS: Department[] = ['COE', 'Project', 'HR', 'Marketing', 'BA', 'Data']
+
 // ============================================
 // DATABASE TYPES
 // ============================================
@@ -24,7 +38,7 @@ export interface Profile {
   full_name: string
   avatar_url?: string
   role: UserRole
-  department?: string
+  department?: Department
   manager_id?: string
   is_active: boolean
   created_at: string
@@ -84,6 +98,7 @@ export interface ProjectMember {
   project?: Project
 }
 
+// Legacy task (read-only / admin only after migration 007)
 export interface Task {
   id: string
   project_id: string
@@ -100,6 +115,17 @@ export interface Task {
   project?: Project
   assignee?: Profile
   logged_hours?: number
+}
+
+// Master task type row (department-scoped)
+export interface TaskType {
+  id: string
+  department: Department
+  name: string
+  description?: string
+  is_active: boolean
+  sort_order: number
+  created_at: string
 }
 
 export interface Timesheet {
@@ -126,7 +152,8 @@ export interface TimeLog {
   timesheet_id: string
   user_id: string
   project_id: string
-  task_id?: string
+  task_id?: string          // legacy
+  task_type_id?: string     // new
   log_date: string
   hours: number
   description?: string
@@ -134,7 +161,8 @@ export interface TimeLog {
   updated_at: string
   // Joined
   project?: Project
-  task?: Task
+  task?: Task               // legacy
+  task_type?: TaskType      // new
   user?: Profile
 }
 
@@ -182,12 +210,10 @@ export interface ProjectReport {
     full_name: string
     hours: number
   }[]
-  tasks: {
-    task_id: string
-    task_name: string
-    status: TaskStatus
-    estimated_hours: number
-    logged_hours: number
+  task_types: {
+    task_type_id: string
+    task_type_name: string
+    hours: number
   }[]
 }
 
@@ -233,18 +259,9 @@ export interface CreateProjectForm {
   budget?: number
 }
 
-export interface CreateTaskForm {
-  project_id: string
-  name: string
-  description?: string
-  estimated_hours?: number
-  assigned_to?: string
-  due_date?: string
-}
-
 export interface LogTimeForm {
   project_id: string
-  task_id?: string
+  task_type_id: string
   log_date: string
   hours: number
   description?: string
@@ -261,8 +278,7 @@ export interface CreateClientForm {
 }
 
 // ============================================
-// DB ROW TYPES (actual columns only, no joins, nullable as | null)
-// Used exclusively in the Database interface below.
+// DB ROW TYPES
 // ============================================
 
 interface ProfileRow {
@@ -271,7 +287,7 @@ interface ProfileRow {
   full_name: string
   avatar_url: string | null
   role: UserRole
-  department: string | null
+  department: Department | null
   manager_id: string | null
   is_active: boolean
   created_at: string
@@ -316,18 +332,14 @@ interface ProjectMemberRow {
   assigned_at: string
 }
 
-interface TaskRow {
+interface TaskTypeRow {
   id: string
-  project_id: string
+  department: Department
   name: string
   description: string | null
-  status: TaskStatus
-  estimated_hours: number | null
-  assigned_to: string | null
-  created_by: string
-  due_date: string | null
+  is_active: boolean
+  sort_order: number
   created_at: string
-  updated_at: string
 }
 
 interface TimesheetRow {
@@ -351,6 +363,7 @@ interface TimeLogRow {
   user_id: string
   project_id: string
   task_id: string | null
+  task_type_id: string | null
   log_date: string
   hours: number
   description: string | null
@@ -401,7 +414,7 @@ export interface Database {
           full_name: string
           avatar_url?: string | null
           role?: UserRole
-          department?: string | null
+          department?: Department | null
           manager_id?: string | null
           is_active?: boolean
         }
@@ -450,19 +463,16 @@ export interface Database {
         Update: Partial<ProjectMemberRow>
         Relationships: []
       }
-      tasks: {
-        Row: TaskRow
+      task_types: {
+        Row: TaskTypeRow
         Insert: {
-          project_id: string
+          department: Department
           name: string
           description?: string | null
-          status?: TaskStatus
-          estimated_hours?: number | null
-          assigned_to?: string | null
-          created_by: string
-          due_date?: string | null
+          is_active?: boolean
+          sort_order?: number
         }
-        Update: Partial<TaskRow>
+        Update: Partial<TaskTypeRow>
         Relationships: []
       }
       timesheets: {
@@ -487,7 +497,7 @@ export interface Database {
           timesheet_id: string
           user_id: string
           project_id: string
-          task_id?: string | null
+          task_type_id?: string | null
           log_date: string
           hours: number
           description?: string | null

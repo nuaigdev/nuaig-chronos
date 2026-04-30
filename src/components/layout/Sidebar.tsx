@@ -9,7 +9,7 @@ import { getInitials } from '@/utils'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  LayoutDashboard, FolderKanban, CheckSquare, Clock, FileText,
+  LayoutDashboard, FolderKanban, FileText,
   Users, BarChart3, Settings, Bell, Building2, LogOut, KeyRound, X
 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -21,10 +21,8 @@ const NAV_ITEMS = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', roles: ['admin', 'manager', 'employee'] },
   { href: '/dashboard/clients', icon: Building2, label: 'Clients', roles: ['admin', 'manager'] },
   { href: '/dashboard/projects', icon: FolderKanban, label: 'Projects', roles: ['admin', 'manager', 'employee'] },
-  { href: '/dashboard/tasks', icon: CheckSquare, label: 'Tasks', roles: ['admin', 'manager', 'employee'] },
-  { href: '/dashboard/time-logs', icon: Clock, label: 'Time Logs', roles: ['admin', 'manager', 'employee'] },
   { href: '/dashboard/timesheets', icon: FileText, label: 'Timesheets', roles: ['admin', 'manager', 'employee'] },
-  { href: '/dashboard/approvals', icon: CheckSquare, label: 'Approvals', roles: ['admin', 'manager'] },
+  { href: '/dashboard/approvals', icon: FileText, label: 'Approvals', roles: ['admin', 'manager'] },
   { href: '/dashboard/team', icon: Users, label: 'Team', roles: ['admin', 'manager'] },
   { href: '/dashboard/reports', icon: BarChart3, label: 'Reports', roles: ['admin', 'manager'] },
   { href: '/dashboard/settings', icon: Settings, label: 'Settings', roles: ['admin'] },
