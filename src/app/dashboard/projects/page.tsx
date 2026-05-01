@@ -280,7 +280,11 @@ export default function ProjectsPage() {
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Projects</h1>
           <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>{filtered.length} project{filtered.length !== 1 ? 's' : ''}</p>
         </div>
-
+        {canManageProjects && (
+          <button className="btn-primary" onClick={openCreate} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+            <Plus size={14} />New Project
+          </button>
+        )}
       </div>
 
       {/* Filters */}

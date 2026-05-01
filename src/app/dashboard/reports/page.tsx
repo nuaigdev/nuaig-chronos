@@ -230,7 +230,7 @@ export default function ReportsPage() {
     return Object.values(map).sort((a, b) => a.clientName.localeCompare(b.clientName))
   }, [logs, selectedClient])
 
-  // Resource tab: group logs → resource → project → individual logs
+  // Resource tab: group logs → resource → client (summary) + all logs sorted by date (expanded)
   const resourceData = useMemo(() => {
     let filtered = logs
     if (selectedDept) filtered = filtered.filter(l => l.department === selectedDept)
@@ -238,16 +238,18 @@ export default function ReportsPage() {
 
     const map: Record<string, {
       userId: string; userName: string; department: string; totalHours: number;
-      projects: Record<string, { projectId: string; projectName: string; hours: number; logs: EnrichedLog[] }>
+      clients: Record<string, { clientId: string; clientName: string; hours: number }>
+      allLogs: EnrichedLog[]
     }> = {}
 
     for (const log of filtered) {
-      if (!map[log.user_id]) map[log.user_id] = { userId: log.user_id, userName: log.userName, department: log.department, totalHours: 0, projects: {} }
+      if (!map[log.user_id]) map[log.user_id] = { userId: log.user_id, userName: log.userName, department: log.department, totalHours: 0, clients: {}, allLogs: [] }
       const rm = map[log.user_id]
       rm.totalHours += log.hours
-      if (!rm.projects[log.project_id]) rm.projects[log.project_id] = { projectId: log.project_id, projectName: log.projectName, hours: 0, logs: [] }
-      rm.projects[log.project_id].hours += log.hours
-      rm.projects[log.project_id].logs.push(log)
+      const cid = log.clientId || 'no-client'
+      if (!rm.clients[cid]) rm.clients[cid] = { clientId: cid, clientName: log.clientName, hours: 0 }
+      rm.clients[cid].hours += log.hours
+      rm.allLogs.push(log)
     }
     return Object.values(map).sort((a, b) => a.userName.localeCompare(b.userName))
   }, [logs, selectedDept, selectedResource])
@@ -274,16 +276,18 @@ export default function ReportsPage() {
     } else {
       const rows: string[][] = []
       for (const res of resourceData) {
-        for (const proj of Object.values(res.projects).sort((a, b) => a.projectName.localeCompare(b.projectName))) {
-          rows.push([res.userName, res.department, proj.projectName, proj.hours.toFixed(1)])
-          for (const log of proj.logs.sort((a, b) => a.log_date.localeCompare(b.log_date))) {
-            rows.push([res.userName, res.department, `  ${proj.projectName} — ${format(new Date(log.log_date + 'T00:00:00'), 'MMM d, yyyy')}${log.description ? ' — ' + log.description : ''}`, log.hours.toFixed(1)])
+        for (const client of Object.values(res.clients).sort((a, b) => a.clientName.localeCompare(b.clientName))) {
+          rows.push([res.userName, res.department, client.clientName, client.hours.toFixed(1)])
+        }
+        if (expandedResource === res.userId) {
+          for (const log of res.allLogs.sort((a, b) => a.log_date.localeCompare(b.log_date))) {
+            rows.push([res.userName, res.department, `  ${format(new Date(log.log_date + 'T00:00:00'), 'MMM d, yyyy')} — ${log.projectName}${log.description ? ' — ' + log.description : ''}`, log.hours.toFixed(1)])
           }
         }
         rows.push([res.userName, res.department, 'RESOURCE TOTAL', res.totalHours.toFixed(1)])
         rows.push(['', '', '', ''])
       }
-      downloadCSV(`resource_report_${startStr}_${endStr}.csv`, rows, ['Resource', 'Department', 'Project', 'Time (h)'])
+      downloadCSV(`resource_report_${startStr}_${endStr}.csv`, rows, ['Resource', 'Department', 'Client / Date', 'Time (h)'])
       toast.success('CSV downloaded')
     }
   }
@@ -348,12 +352,12 @@ export default function ReportsPage() {
         {/* Nav */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <button style={navBtn} onClick={() => setNavOffset(n => n - 1)}><ChevronLeft size={14} /></button>
-          <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', minWidth: '56px', textAlign: 'center' }}>
-            {navOffset === 0 ? 'Current' : navOffset > 0 ? `+${navOffset}` : `${navOffset}`}
+          <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', minWidth: '120px', textAlign: 'center' }}>
+            {pLabel}
           </span>
           <button style={navBtn} onClick={() => setNavOffset(n => n + 1)}><ChevronRight size={14} /></button>
           {navOffset !== 0 && (
-            <button style={{ ...navBtn, fontSize: '11px', padding: '5px 10px' }} onClick={() => setNavOffset(0)}>Today</button>
+            <button style={{ ...navBtn, fontSize: '11px', padding: '5px 10px' }} onClick={() => setNavOffset(0)}>Current</button>
           )}
         </div>
       </div>
@@ -504,7 +508,7 @@ export default function ReportsPage() {
                   padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)',
                   background: 'var(--chronos-surface-2)',
                 }}>
-                  {['Resource', 'Department', 'Project', 'Time'].map(col => (
+                  {['Resource', 'Department', 'Client', 'Time'].map(col => (
                     <span key={col} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{col}</span>
                   ))}
                 </div>
@@ -527,59 +531,82 @@ export default function ReportsPage() {
 
                       {resources.map(res => {
                         const isExpanded = expandedResource === res.userId
-                        const sortedProjects = Object.values(res.projects).sort((a, b) => a.projectName.localeCompare(b.projectName))
+                        const sortedClients = Object.values(res.clients).sort((a, b) => a.clientName.localeCompare(b.clientName))
+                        const sortedLogs = [...res.allLogs].sort((a, b) => a.log_date.localeCompare(b.log_date))
 
                         return (
                           <div key={res.userId}>
-                            {sortedProjects.map((proj, pi) => (
-                              <div key={proj.projectId}>
-                                <div
-                                  onClick={() => setExpandedResource(isExpanded ? null : res.userId)}
-                                  style={{
-                                    display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr 100px',
-                                    padding: '10px 16px', borderBottom: '1px solid var(--chronos-border)',
-                                    alignItems: 'center', cursor: 'pointer',
-                                    background: isExpanded ? 'rgba(167,139,250,0.03)' : 'transparent',
-                                    transition: 'background 0.1s',
-                                  }}
-                                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--chronos-surface-2)'}
-                                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = isExpanded ? 'rgba(167,139,250,0.03)' : 'transparent'}
-                                >
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                    {pi === 0 && (
-                                      <>
-                                        <span style={{ color: 'var(--chronos-text-muted)', flexShrink: 0, display: 'flex' }}>
-                                          {isExpanded ? <ChevronDown size={13} /> : <ChevronRightIcon size={13} />}
-                                        </span>
-                                        <span style={{ fontWeight: 600, fontSize: '13px' }}>{res.userName}</span>
-                                      </>
-                                    )}
-                                  </div>
-                                  <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{pi === 0 ? res.department : ''}</span>
-                                  <span style={{ fontSize: '13px' }}>{proj.projectName}</span>
-                                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: ACCENT }}>{h(proj.hours)}</span>
-                                </div>
-
-                                {/* Expanded individual logs */}
-                                {isExpanded && proj.logs
-                                  .sort((a, b) => a.log_date.localeCompare(b.log_date))
-                                  .map(log => (
-                                    <div key={log.id} style={{
-                                      display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr 100px',
-                                      padding: '7px 16px 7px 52px', borderBottom: '1px solid var(--chronos-border)',
-                                      alignItems: 'center', background: 'rgba(0,0,0,0.14)',
-                                    }}>
-                                      <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
-                                        {format(new Date(log.log_date + 'T00:00:00'), 'EEE, MMM d')}
-                                        {log.description && (
-                                          <span style={{ marginLeft: '8px', fontStyle: 'italic', opacity: 0.7 }}>— {log.description}</span>
-                                        )}
+                            {/* Summary rows: one per client */}
+                            {!isExpanded && sortedClients.map((client, ci) => (
+                              <div
+                                key={client.clientId}
+                                onClick={() => setExpandedResource(res.userId)}
+                                style={{
+                                  display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr 100px',
+                                  padding: '10px 16px', borderBottom: '1px solid var(--chronos-border)',
+                                  alignItems: 'center', cursor: 'pointer',
+                                  transition: 'background 0.1s',
+                                }}
+                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--chronos-surface-2)'}
+                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  {ci === 0 && (
+                                    <>
+                                      <span style={{ color: 'var(--chronos-text-muted)', flexShrink: 0, display: 'flex' }}>
+                                        <ChevronRightIcon size={13} />
                                       </span>
-                                      <span />
-                                      <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{proj.projectName}</span>
-                                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 600, color: 'var(--chronos-text)' }}>{h(log.hours)}</span>
-                                    </div>
-                                  ))}
+                                      <span style={{ fontWeight: 600, fontSize: '13px' }}>{res.userName}</span>
+                                    </>
+                                  )}
+                                </div>
+                                <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{ci === 0 ? res.department : ''}</span>
+                                <span style={{ fontSize: '13px' }}>{client.clientName}</span>
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: ACCENT }}>{h(client.hours)}</span>
+                              </div>
+                            ))}
+
+                            {/* Expanded: collapse header row */}
+                            {isExpanded && (
+                              <div
+                                onClick={() => setExpandedResource(null)}
+                                style={{
+                                  display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr 100px',
+                                  padding: '10px 16px', borderBottom: '1px solid var(--chronos-border)',
+                                  alignItems: 'center', cursor: 'pointer',
+                                  background: 'rgba(167,139,250,0.04)',
+                                }}
+                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--chronos-surface-2)'}
+                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'rgba(167,139,250,0.04)'}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span style={{ color: 'var(--chronos-text-muted)', flexShrink: 0, display: 'flex' }}>
+                                    <ChevronDown size={13} />
+                                  </span>
+                                  <span style={{ fontWeight: 600, fontSize: '13px' }}>{res.userName}</span>
+                                </div>
+                                <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{res.department}</span>
+                                <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', fontStyle: 'italic' }}>All time logs — date order</span>
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: ACCENT }}>{h(res.totalHours)}</span>
+                              </div>
+                            )}
+
+                            {/* Expanded: individual logs date-wise */}
+                            {isExpanded && sortedLogs.map(log => (
+                              <div key={log.id} style={{
+                                display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr 100px',
+                                padding: '7px 16px 7px 52px', borderBottom: '1px solid var(--chronos-border)',
+                                alignItems: 'center', background: 'rgba(0,0,0,0.14)',
+                              }}>
+                                <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
+                                  {format(new Date(log.log_date + 'T00:00:00'), 'EEE, MMM d')}
+                                  {log.description && (
+                                    <span style={{ marginLeft: '8px', fontStyle: 'italic', opacity: 0.7 }}>— {log.description}</span>
+                                  )}
+                                </span>
+                                <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{log.clientName}</span>
+                                <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{log.projectName}</span>
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 600, color: 'var(--chronos-text)' }}>{h(log.hours)}</span>
                               </div>
                             ))}
 
