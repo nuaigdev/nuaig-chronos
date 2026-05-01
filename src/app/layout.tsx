@@ -27,8 +27,8 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'NuAIg Chronos — Time Intelligence Platform',
-  description: 'Professional time tracking, project management, and workforce analytics by NuAIg',
+  title: 'Chronos — Time Intelligence Platform',
+  description: 'Professional time tracking, project management, and workforce analytics',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

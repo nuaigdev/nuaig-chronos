@@ -13,12 +13,18 @@ export async function POST(req: NextRequest) {
 
     const { data: callerProfile } = await supabase
       .from('profiles')
-      .select('role')
+      .select('role, company_id')
       .eq('id', user.id)
       .single()
 
     if (!callerProfile || callerProfile.role !== 'admin') {
       return NextResponse.json({ error: 'Only admins can create users' }, { status: 403 })
+    }
+
+    // Admins can only create users for their own company
+    const company_id = callerProfile.company_id
+    if (!company_id) {
+      return NextResponse.json({ error: 'Admin has no company assigned' }, { status: 400 })
     }
 
     // 2. Parse request body
@@ -51,7 +57,11 @@ export async function POST(req: NextRequest) {
       email: user_email.trim().toLowerCase(),
       password: user_password,
       email_confirm: true,
-      user_metadata: { full_name: user_name.trim(), role: user_role ?? 'employee' },
+      user_metadata: {
+        full_name: user_name.trim(),
+        role: user_role ?? 'employee',
+        company_id,
+      },
     })
 
     if (createError) {
@@ -62,7 +72,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'User creation failed' }, { status: 500 })
     }
 
-    // 4. Upsert profile row with all fields
+    // 4. Upsert profile row with all fields including company_id
     //    (the handle_new_user trigger fires and creates a basic row;
     //     we upsert to add department, manager_id etc.)
     const profilePayload: Record<string, unknown> = {
@@ -71,6 +81,7 @@ export async function POST(req: NextRequest) {
       full_name: user_name.trim(),
       role: user_role ?? 'employee',
       department: user_dept ?? null,
+      company_id,
       manager_id: (user_role === 'manager' && manager_id) ? manager_id : null,
     }
 

@@ -2,7 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { Bell, Search, Plus } from 'lucide-react'
+import { Bell, Plus } from 'lucide-react'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useAuth } from '@/hooks/useAuth'
 import { formatDate } from '@/utils'
@@ -29,7 +29,7 @@ const QUICK_ACTIONS: Record<string, { label: string; href: string }> = {
 export default function TopBar() {
   const pathname = usePathname()
   const { unreadCount } = useNotifications()
-  const { profile } = useAuth()
+  const { company } = useAuth()
 
   const title = Object.keys(PAGE_TITLES)
     .sort((a, b) => b.length - a.length)
@@ -60,6 +60,32 @@ export default function TopBar() {
 
       {/* Actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        {/* Company badge */}
+        {company && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '6px',
+            padding: '4px 10px',
+            borderRadius: '8px',
+            background: 'var(--chronos-surface-2)',
+            border: '1px solid var(--chronos-border)',
+          }}>
+            <div style={{
+              width: '6px', height: '6px', borderRadius: '50%',
+              background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+              flexShrink: 0,
+            }} />
+            <span style={{
+              fontSize: '12px',
+              fontWeight: 600,
+              color: 'var(--chronos-text)',
+              whiteSpace: 'nowrap',
+              letterSpacing: '-0.01em',
+            }}>
+              {company.name}
+            </span>
+          </div>
+        )}
+
         {quickAction && (
           <Link href={quickAction.href}>
             <button className="btn-primary" style={{ padding: '7px 14px', fontSize: '13px' }}>

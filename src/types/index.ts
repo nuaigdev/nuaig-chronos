@@ -1,5 +1,5 @@
 // ============================================
-// NuAIg Chronos - TypeScript Types
+// Chronos - TypeScript Types
 // ============================================
 
 export type UserRole = 'admin' | 'manager' | 'employee'
@@ -33,6 +33,16 @@ export const DEPARTMENTS: string[] = ['COE', 'Project', 'HR', 'Marketing', 'BA',
 // DATABASE TYPES
 // ============================================
 
+export interface Company {
+  id: string
+  name: string
+  slug: string
+  logo_url?: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface Profile {
   id: string
   email: string
@@ -41,12 +51,14 @@ export interface Profile {
   role: UserRole
   department?: string
   manager_id?: string
+  company_id: string
   is_active: boolean
   created_at: string
   updated_at: string
   // Joined
   manager?: Profile
   reports?: Profile[]
+  company?: Company
 }
 
 export interface DeptRow {
@@ -55,6 +67,7 @@ export interface DeptRow {
   display_name: string
   description: string | null
   manager_id: string | null
+  company_id: string
   is_active: boolean
   created_at: string
   updated_at: string
@@ -72,6 +85,7 @@ export interface Client {
   industry?: string
   notes?: string
   is_active: boolean
+  company_id: string
   created_by: string
   created_at: string
   updated_at: string
@@ -90,6 +104,7 @@ export interface Project {
   end_date?: string
   estimated_hours?: number
   budget?: number
+  company_id: string
   created_by: string
   created_at: string
   updated_at: string
@@ -139,6 +154,7 @@ export interface TaskType {
   description?: string
   is_active: boolean
   sort_order: number
+  company_id: string
   created_at: string
 }
 
@@ -153,6 +169,7 @@ export interface Timesheet {
   reviewed_at?: string
   review_comment?: string
   total_hours: number
+  company_id: string
   created_at: string
   updated_at: string
   // Joined
@@ -171,6 +188,7 @@ export interface TimeLog {
   log_date: string
   hours: number
   description?: string
+  company_id: string
   created_at: string
   updated_at: string
   // Joined
@@ -196,6 +214,7 @@ export interface Holiday {
   name: string
   date: string
   is_optional: boolean
+  company_id: string
   created_by: string
   created_at: string
 }
@@ -204,6 +223,7 @@ export interface AdminSetting {
   id: string
   key: string
   value: Record<string, unknown>
+  company_id: string
   updated_by?: string
   updated_at: string
 }
@@ -309,6 +329,7 @@ interface ProfileRow {
   role: UserRole
   department: string | null
   manager_id: string | null
+  company_id: string
   is_active: boolean
   created_at: string
   updated_at: string
@@ -324,6 +345,7 @@ interface ClientRow {
   industry: string | null
   notes: string | null
   is_active: boolean
+  company_id: string
   created_by: string | null
   created_at: string
   updated_at: string
@@ -339,6 +361,7 @@ interface ProjectRow {
   end_date: string | null
   estimated_hours: number | null
   budget: number | null
+  company_id: string
   created_by: string
   created_at: string
   updated_at: string
@@ -359,6 +382,7 @@ interface TaskTypeRow {
   description: string | null
   is_active: boolean
   sort_order: number
+  company_id: string
   created_at: string
 }
 
@@ -373,6 +397,7 @@ interface TimesheetRow {
   reviewed_at: string | null
   review_comment: string | null
   total_hours: number
+  company_id: string
   created_at: string
   updated_at: string
 }
@@ -387,6 +412,7 @@ interface TimeLogRow {
   log_date: string
   hours: number
   description: string | null
+  company_id: string
   created_at: string
   updated_at: string
 }
@@ -407,6 +433,7 @@ interface HolidayRow {
   name: string
   date: string
   is_optional: boolean
+  company_id: string
   created_by: string
   created_at: string
 }
@@ -415,6 +442,7 @@ interface AdminSettingRow {
   id: string
   key: string
   value: Record<string, unknown>
+  company_id: string
   updated_by: string | null
   updated_at: string
 }
@@ -425,6 +453,17 @@ interface DepartmentRow {
   display_name: string
   description: string | null
   manager_id: string | null
+  company_id: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+interface CompanyRow {
+  id: string
+  name: string
+  slug: string
+  logo_url: string | null
   is_active: boolean
   created_at: string
   updated_at: string
@@ -437,6 +476,17 @@ interface DepartmentRow {
 export interface Database {
   public: {
     Tables: {
+      companies: {
+        Row: CompanyRow
+        Insert: {
+          name: string
+          slug: string
+          logo_url?: string | null
+          is_active?: boolean
+        }
+        Update: Partial<CompanyRow>
+        Relationships: []
+      }
       profiles: {
         Row: ProfileRow
         Insert: {
@@ -447,6 +497,7 @@ export interface Database {
           role?: UserRole
           department?: string | null
           manager_id?: string | null
+          company_id: string
           is_active?: boolean
         }
         Update: Partial<ProfileRow>
@@ -463,6 +514,7 @@ export interface Database {
           industry?: string | null
           notes?: string | null
           is_active?: boolean
+          company_id: string
           created_by?: string | null
         }
         Update: Partial<ClientRow>
@@ -479,6 +531,7 @@ export interface Database {
           end_date?: string | null
           estimated_hours?: number | null
           budget?: number | null
+          company_id: string
           created_by: string
         }
         Update: Partial<ProjectRow>
@@ -502,6 +555,7 @@ export interface Database {
           description?: string | null
           is_active?: boolean
           sort_order?: number
+          company_id: string
         }
         Update: Partial<TaskTypeRow>
         Relationships: []
@@ -518,6 +572,7 @@ export interface Database {
           reviewed_at?: string | null
           review_comment?: string | null
           total_hours?: number
+          company_id?: string
         }
         Update: Partial<TimesheetRow>
         Relationships: []
@@ -532,6 +587,7 @@ export interface Database {
           log_date: string
           hours: number
           description?: string | null
+          company_id?: string
         }
         Update: Partial<TimeLogRow>
         Relationships: []
@@ -555,6 +611,7 @@ export interface Database {
           name: string
           date: string
           is_optional?: boolean
+          company_id: string
           created_by: string
         }
         Update: Partial<HolidayRow>
@@ -565,6 +622,7 @@ export interface Database {
         Insert: {
           key: string
           value: Record<string, unknown>
+          company_id: string
           updated_by?: string | null
         }
         Update: Partial<AdminSettingRow>
@@ -577,6 +635,7 @@ export interface Database {
           display_name: string
           description?: string | null
           manager_id?: string | null
+          company_id: string
           is_active?: boolean
         }
         Update: Partial<DepartmentRow>

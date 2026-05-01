@@ -12,7 +12,7 @@ import toast from 'react-hot-toast'
 const supabase = createClient()
 
 export default function SettingsPage() {
-  const { profile, isAdmin } = useAuth()
+  const { profile, company, isAdmin } = useAuth()
   const [workingHours, setWorkingHours] = useState(8)
   const [holidays, setHolidays] = useState<Holiday[]>([])
   const [saving, setSaving] = useState(false)
@@ -23,25 +23,41 @@ export default function SettingsPage() {
   useEffect(() => { fetchSettings(); fetchHolidays() }, [])
 
   const fetchSettings = async () => {
-    const { data } = await supabase.from('admin_settings').select('*').eq('key', 'working_hours_per_day').single()
+    // RLS automatically scopes to the user's company via company_id
+    const { data } = await supabase
+      .from('admin_settings')
+      .select('*')
+      .eq('key', 'working_hours_per_day')
+      .single()
     if (data) setWorkingHours((data.value as { value: number }).value)
   }
 
   const fetchHolidays = async () => {
+    // RLS automatically scopes to the user's company via company_id
     const { data } = await supabase.from('holidays').select('*').order('date')
     setHolidays((data || []) as unknown as Holiday[])
   }
 
   const saveSettings = async () => {
+    if (!profile) return
     setSaving(true)
-    await supabase.from('admin_settings').update({ value: { value: workingHours }, updated_by: profile!.id }).eq('key', 'working_hours_per_day')
+    // Update is RLS-scoped; the unique constraint is now (company_id, key)
+    await supabase
+      .from('admin_settings')
+      .update({ value: { value: workingHours }, updated_by: profile.id })
+      .eq('key', 'working_hours_per_day')
     toast.success('Settings saved!')
     setSaving(false)
   }
 
   const addHoliday = async () => {
+    if (!profile) return
     if (!holidayForm.name || !holidayForm.date) { toast.error('Name and date required'); return }
-    const { error } = await supabase.from('holidays').insert({ ...holidayForm, created_by: profile!.id })
+    const { error } = await supabase.from('holidays').insert({
+      ...holidayForm,
+      created_by: profile.id,
+      // company_id is automatically set by RLS / trigger from the user's profile
+    })
     if (error) { toast.error('Error adding holiday'); return }
     toast.success('Holiday added!')
     setShowHolidayModal(false)
@@ -68,7 +84,7 @@ export default function SettingsPage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '720px' }}>
       <div>
         <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Settings</h1>
-        <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>Configure workspace settings</p>
+        <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>Configure workspace settings for {company?.name ?? 'your organisation'}</p>
       </div>
 
       {/* Tabs */}
@@ -110,10 +126,10 @@ export default function SettingsPage() {
           </div>
 
           <div style={{ borderTop: '1px solid var(--chronos-border)', paddingTop: '16px' }}>
-            <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '15px', fontWeight: 700, marginBottom: '12px' }}>Organization Info</h3>
+            <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '15px', fontWeight: 700, marginBottom: '12px' }}>Organisation Info</h3>
             <div style={{ display: 'grid', gap: '12px' }}>
               <FormField label="Company Name">
-                <input className="input-base" value="NuAIg" disabled style={{ opacity: 0.6 }} />
+                <input className="input-base" value={company?.name ?? ''} disabled style={{ opacity: 0.6 }} />
               </FormField>
               <FormField label="Time Zone">
                 <input className="input-base" value={Intl.DateTimeFormat().resolvedOptions().timeZone} disabled style={{ opacity: 0.6 }} />

@@ -29,6 +29,32 @@ const NAV_ITEMS = [
   { href: '/dashboard/settings', icon: Settings, label: 'Settings', roles: ['admin'] },
 ]
 
+// Abstract Chronos logo mark — three offset arcs forming a dynamic C-shape
+function ChronosLogo({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none">
+      {/* Outer arc — top right */}
+      <path
+        d="M 26 8 C 30 12 30 20 26 24"
+        stroke="white"
+        strokeWidth="3"
+        strokeLinecap="round"
+        opacity="0.55"
+      />
+      {/* Middle arc — full sweep */}
+      <path
+        d="M 22 4 C 30 8 30 24 22 28"
+        stroke="white"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        opacity="0.8"
+      />
+      {/* Inner shape — solid pill */}
+      <rect x="6" y="11" width="14" height="10" rx="5" fill="white" />
+    </svg>
+  )
+}
+
 export default function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
@@ -73,6 +99,8 @@ export default function Sidebar() {
     item.roles.includes(profile?.role || 'employee')
   )
 
+  void isAdmin; void isManager // used for nav filtering via profile.role
+
   return (
     <>
     <aside style={{
@@ -92,17 +120,14 @@ export default function Sidebar() {
           <div style={{
             width: '34px', height: '34px', borderRadius: '10px',
             background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            boxShadow: '0 0 12px rgba(59,130,246,0.25)',
           }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <polyline points="12 6 12 12 16 14"/>
-            </svg>
+            <ChronosLogo size={20} />
           </div>
           <div>
-            <div style={{ fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '16px', letterSpacing: '-0.03em', lineHeight: 1 }}>
-              <span className="gradient-text">NuAIg</span>
-              <span style={{ color: 'var(--chronos-text)' }}> Chronos</span>
+            <div style={{ fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '17px', letterSpacing: '-0.03em', lineHeight: 1 }}>
+              <span className="gradient-text">Chronos</span>
             </div>
             <div style={{ fontSize: '10px', color: 'var(--chronos-text-muted)', fontFamily: 'DM Sans, sans-serif', marginTop: '2px' }}>
               Time Intelligence
