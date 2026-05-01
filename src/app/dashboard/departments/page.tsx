@@ -27,6 +27,11 @@ export default function DepartmentsPage() {
   const [createForm, setCreateForm] = useState({ name: '', display_name: '', description: '' })
   const [creating, setCreating] = useState(false)
 
+  // Edit department modal
+  const [editModal, setEditModal] = useState<DeptRow | null>(null)
+  const [editForm, setEditForm] = useState({ name: '', display_name: '', description: '' })
+  const [editing, setEditing] = useState(false)
+
   // Manager modal
   const [managerModal, setManagerModal] = useState<DeptRow | null>(null)
   const [selectedManager, setSelectedManager] = useState('')
@@ -75,7 +80,6 @@ export default function DepartmentsPage() {
     if (!createForm.name.trim()) { toast.error('Department code/name is required'); return }
     if (!createForm.display_name.trim()) { toast.error('Display name is required'); return }
 
-    // Validate: name must be alphanumeric (used as the dept key)
     if (!/^[A-Za-z0-9_-]+$/.test(createForm.name.trim())) {
       toast.error('Department code must be alphanumeric (letters, numbers, _ or -)')
       return
@@ -96,6 +100,57 @@ export default function DepartmentsPage() {
       toast.error(err instanceof Error ? err.message : 'Error creating department')
     } finally {
       setCreating(false)
+    }
+  }
+
+  // ── Edit department ───────────────────────────────────────────────────────
+
+  const openEditModal = (dept: DeptRow) => {
+    setEditModal(dept)
+    setEditForm({ name: dept.name, display_name: dept.display_name, description: dept.description || '' })
+  }
+
+  const handleEdit = async () => {
+    if (!editModal) return
+    if (!editForm.name.trim()) { toast.error('Department code is required'); return }
+    if (!editForm.display_name.trim()) { toast.error('Display name is required'); return }
+    if (!/^[A-Za-z0-9_-]+$/.test(editForm.name.trim())) {
+      toast.error('Department code must be alphanumeric (letters, numbers, _ or -)')
+      return
+    }
+
+    const newName = editForm.name.trim().toUpperCase()
+    const oldName = editModal.name
+
+    setEditing(true)
+    try {
+      // If department name (code) is changing, we must cascade to profiles and task_types
+      // The migration 012 handles this via a trigger, but we do it manually here too as a safety net
+      const { error } = await supabase.from('departments').update({
+        name: newName,
+        display_name: editForm.display_name.trim(),
+        description: editForm.description.trim() || null,
+      }).eq('id', editModal.id)
+
+      if (error) throw error
+
+      // If name changed, cascade update to profiles.department and task_types.department
+      if (newName !== oldName) {
+        const [{ error: profError }, { error: ttError }] = await Promise.all([
+          supabase.from('profiles').update({ department: newName }).eq('department', oldName),
+          supabase.from('task_types').update({ department: newName }).eq('department', oldName),
+        ])
+        if (profError) console.error('Profile cascade error:', profError)
+        if (ttError) console.error('Task type cascade error:', ttError)
+      }
+
+      toast.success('Department updated')
+      setEditModal(null)
+      fetchData()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Error updating department')
+    } finally {
+      setEditing(false)
     }
   }
 
@@ -165,7 +220,6 @@ export default function DepartmentsPage() {
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
-  // A manager can manage many departments — we list all managers/admins
   const managerOptions = [
     { value: '', label: 'No manager' },
     ...members
@@ -260,7 +314,7 @@ export default function DepartmentsPage() {
                     </div>
                   </div>
 
-                  {/* Manager chip */}
+                  {/* Action buttons */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '8px' }}>
                     {dept.manager ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 10px', borderRadius: '8px', background: 'var(--chronos-surface-2)', border: '1px solid var(--chronos-border)', fontSize: '12px' }}>
@@ -272,6 +326,18 @@ export default function DepartmentsPage() {
                     ) : (
                       <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', fontStyle: 'italic' }}>No manager</span>
                     )}
+
+                    {/* Edit department button */}
+                    <button
+                      onClick={e => { e.stopPropagation(); openEditModal(dept) }}
+                      title="Edit department"
+                      style={{ background: 'none', border: '1px solid var(--chronos-border)', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px 8px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}
+                      onMouseEnter={e => { e.currentTarget.style.color = '#34d399'; e.currentTarget.style.borderColor = '#34d399' }}
+                      onMouseLeave={e => { e.currentTarget.style.color = 'var(--chronos-text-muted)'; e.currentTarget.style.borderColor = 'var(--chronos-border)' }}
+                    >
+                      <Pencil size={11} />Edit
+                    </button>
+
                     <button
                       onClick={e => { e.stopPropagation(); openManagerModal(dept) }}
                       title="Change manager"
@@ -309,7 +375,6 @@ export default function DepartmentsPage() {
                                   <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--chronos-text)' }}>{m.full_name}</div>
                                   <div style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', textTransform: 'capitalize' }}>{m.role}</div>
                                 </div>
-                                {/* Show this member's own manager if set */}
                                 {m.manager_id && (() => {
                                   const mgr = members.find(x => x.id === m.manager_id)
                                   return mgr ? (
@@ -409,6 +474,48 @@ export default function DepartmentsPage() {
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
             <button className="btn-secondary" onClick={() => setCreateModal(false)}>Cancel</button>
             <button className="btn-primary" onClick={handleCreate} disabled={creating}>{creating ? 'Creating…' : 'Create Department'}</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Edit Department Modal ── */}
+      <Modal isOpen={!!editModal} onClose={() => setEditModal(null)} title={`Edit Department — ${editModal?.name}`} size="sm">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <FormField label="Department Code *">
+            <input
+              className="input-base"
+              placeholder="e.g. DESIGN"
+              value={editForm.name}
+              onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+            />
+            <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '4px' }}>
+              Changing this code will update it everywhere it is used (profiles, task types).
+            </p>
+          </FormField>
+          <FormField label="Display Name *">
+            <input
+              className="input-base"
+              placeholder="e.g. Design & UX"
+              value={editForm.display_name}
+              onChange={e => setEditForm(f => ({ ...f, display_name: e.target.value }))}
+            />
+          </FormField>
+          <FormField label="Description">
+            <input
+              className="input-base"
+              placeholder="Optional — what this department does"
+              value={editForm.description}
+              onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
+            />
+          </FormField>
+          {editForm.name.toUpperCase() !== editModal?.name && (
+            <div style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(251,191,36,0.07)', border: '1px solid rgba(251,191,36,0.3)', fontSize: '12px', color: '#fbbf24' }}>
+              ⚠ Renaming the department code from <strong>{editModal?.name}</strong> to <strong>{editForm.name.toUpperCase()}</strong> will cascade to all profiles and task types that use this department.
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn-secondary" onClick={() => setEditModal(null)}>Cancel</button>
+            <button className="btn-primary" onClick={handleEdit} disabled={editing}>{editing ? 'Saving…' : 'Save Changes'}</button>
           </div>
         </div>
       </Modal>
