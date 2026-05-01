@@ -113,10 +113,6 @@ export default function ReportsPage() {
   const [logs, setLogs] = useState<EnrichedLog[]>([])
   const [clients, setClients] = useState<ClientDetail[]>([])
   const [allProfiles, setAllProfiles] = useState<ProfileDetail[]>([])
-  // Lookup of every profile referenced by the current report — includes
-  // resources who logged time AND their managers (backfilled if not active).
-  // Used by the single-resource view to show the manager name.
-  const [profileLookup, setProfileLookup] = useState<Record<string, ProfileDetail>>({})
 
   // Client tab
   const [selectedClient, setSelectedClient] = useState('')
@@ -151,7 +147,7 @@ export default function ReportsPage() {
         const { data: reps } = await supabase.from('profiles').select('id').eq('manager_id', profile.id).eq('is_active', true)
         allowedUserIds = (reps || []).map((r: { id: string }) => r.id)
         if (allowedUserIds.length === 0) {
-          setLogs([]); setClients([]); setAllProfiles([]); setProfileLookup({}); setLoading(false); return
+          setLogs([]); setClients([]); setAllProfiles([]); setLoading(false); return
         }
       } else {
         allowedUserIds = [profile.id]
@@ -172,7 +168,7 @@ export default function ReportsPage() {
       const raw = (rawLogs || []) as RawLog[]
 
       if (raw.length === 0) {
-        setLogs([]); setClients([]); setProfileLookup({}); setLoading(false); return
+        setLogs([]); setClients([]); setLoading(false); return
       }
 
       const projIds = Array.from(new Set(raw.map(l => l.project_id)))
@@ -190,24 +186,6 @@ export default function ReportsPage() {
       for (const p of projArr) projMap[p.id] = p
       const profMap: Record<string, ProfileDetail> = {}
       for (const p of userArr) profMap[p.id] = p
-
-      // Backfill manager profiles that aren't already loaded — needed for the
-      // "single resource" view header row, which displays the manager's name.
-      // Without this, an inactive or out-of-scope manager would render as "—".
-      const knownIds = new Set([...profArr.map(p => p.id), ...userArr.map(p => p.id)])
-      const missingManagerIds = Array.from(new Set(
-        userArr.map(u => u.manager_id).filter((id): id is string => !!id && !knownIds.has(id))
-      ))
-      if (missingManagerIds.length > 0) {
-        const { data: mgrData } = await supabase.from('profiles')
-          .select('id,full_name,department,manager_id').in('id', missingManagerIds)
-        for (const m of (mgrData || []) as ProfileDetail[]) {
-          if (!profMap[m.id]) profMap[m.id] = m
-        }
-      }
-      // Expose the merged profile lookup (users + their managers) for the
-      // resource view to use when rendering the manager name.
-      setProfileLookup(profMap)
 
       const clientIds = Array.from(new Set(projArr.map(p => p.client_id).filter(Boolean))) as string[]
       let clientArr: ClientDetail[] = []
@@ -328,10 +306,19 @@ export default function ReportsPage() {
     () => singleResourceId ? resourceData.find(r => r.userId === singleResourceId) ?? null : null,
     [singleResourceId, resourceData]
   )
-  const singleResourceManagerName = useMemo(() => {
-    if (!singleResource?.managerId) return '—'
-    return profileLookup[singleResource.managerId]?.full_name || '—'
-  }, [singleResource, profileLookup])
+
+  // Manager's name for the single-resource header. Looked up directly from
+  // the profiles table by manager_id whenever the visible resource changes.
+  const [singleResourceManagerName, setSingleResourceManagerName] = useState('—')
+  useEffect(() => {
+    if (!singleResource?.managerId) { setSingleResourceManagerName('—'); return }
+    let cancelled = false
+    supabase.from('profiles').select('full_name').eq('id', singleResource.managerId).single()
+      .then(({ data }: { data: { full_name: string } | null }) => {
+        if (!cancelled) setSingleResourceManagerName(data?.full_name || '—')
+      })
+    return () => { cancelled = true }
+  }, [singleResource?.managerId])
 
   // ─── Export ───────────────────────────────────────────────────────────────
 
