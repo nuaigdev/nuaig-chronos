@@ -198,7 +198,7 @@ export default function ProjectsPage() {
     const { data: rows } = await supabase.from('project_members').select('user_id').eq('project_id', projectId)
     const ids = rows?.map(r => r.user_id) || []
     if (ids.length === 0) { setProjectMembers([]); return }
-    const { data } = await supabase.from('profiles').select('id, full_name, role').in('id', ids)
+    const { data } = await supabase.from('profiles').select('id, full_name, role, manager_id').in('id', ids)
     setProjectMembers((data || []) as unknown as Profile[])
   }
 
@@ -207,11 +207,23 @@ export default function ProjectsPage() {
     const { data: rows } = await supabase.from('project_members').select('user_id').eq('project_id', projectId)
     const existingIds = new Set((rows || []).map(r => r.user_id))
 
-    // Managers see direct reports; admins see all active users
-    const { data } = isAdmin
-      ? await supabase.from('profiles').select('id, full_name').eq('is_active', true)
-      : await supabase.from('profiles').select('id, full_name').eq('manager_id', profile!.id).eq('is_active', true)
-    const available = ((data || []) as unknown as Profile[]).filter(m => !existingIds.has(m.id))
+    // Admins: all active users
+    // Managers: their direct reports + themselves (so they can add themselves)
+    let data: { id: string; full_name: string }[] = []
+    if (isAdmin) {
+      const res = await supabase.from('profiles').select('id, full_name').eq('is_active', true)
+      data = (res.data || []) as { id: string; full_name: string }[]
+    } else {
+      // Direct reports
+      const res = await supabase.from('profiles').select('id, full_name').eq('manager_id', profile!.id).eq('is_active', true)
+      data = (res.data || []) as { id: string; full_name: string }[]
+      // Add self if not already included
+      if (profile && !data.find(m => m.id === profile.id)) {
+        data = [{ id: profile.id, full_name: profile.full_name }, ...data]
+      }
+    }
+
+    const available = (data as unknown as Profile[]).filter(m => !existingIds.has(m.id))
     setAvailableToAdd(available)
   }
 
@@ -231,10 +243,15 @@ export default function ProjectsPage() {
     if (profile) fetchProjects(profile.id, canManageProjects)
   }
 
-  const removeMember = async (userId: string) => {
+  const removeMember = async (userId: string, memberManagerId?: string | null) => {
     // Prevent removing the project owner
     if (membersProjectCreatedBy === userId) {
       toast.error('Cannot remove the project owner from the project.')
+      return
+    }
+    // Managers can only remove their own direct reports (or themselves)
+    if (!isAdmin && userId !== profile?.id && memberManagerId !== profile?.id) {
+      toast.error('You can only remove your own direct reports from a project.')
       return
     }
     const { error } = await supabase.from('project_members').delete()
@@ -476,8 +493,8 @@ export default function ProjectsPage() {
                       {isOwner && (
                         <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '100px', background: 'rgba(167,139,250,0.15)', color: 'var(--chronos-accent)', border: '1px solid rgba(167,139,250,0.3)', flexShrink: 0 }}>OWNER</span>
                       )}
-                      {canManageProjects && !isOwner && (
-                        <button onClick={() => removeMember(m.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px', borderRadius: '4px' }}
+                      {canManageProjects && !isOwner && (isAdmin || m.manager_id === profile?.id || m.id === profile?.id) && (
+                        <button onClick={() => removeMember(m.id, m.manager_id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px', borderRadius: '4px' }}
                           onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-danger)'}
                           onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
                           title="Remove member"

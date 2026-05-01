@@ -14,7 +14,7 @@ const supabase = createClient()
 type TimesheetWithUser = Timesheet & { user: Profile }
 
 export default function ApprovalsPage() {
-  const { profile, profileReady, canManageProjects } = useAuth()
+  const { profile, profileReady, canManageProjects, isAdmin } = useAuth()
   const [timesheets, setTimesheets] = useState<TimesheetWithUser[]>([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -27,20 +27,43 @@ export default function ApprovalsPage() {
   const fetchTimesheets = useCallback(async () => {
     if (!profile || !canManageProjects) return
     setLoading(true)
+
+    // Get the IDs of direct reports for this manager/admin
+    // Admin sees everyone; manager sees only their direct reports
+    let reporteeIds: string[] = []
+    if (!isAdmin) {
+      const { data: reportees } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('manager_id', profile.id)
+        .eq('is_active', true)
+      reporteeIds = (reportees || []).map(r => r.id)
+
+      // If no direct reports, nothing to show
+      if (reporteeIds.length === 0) {
+        setTimesheets([])
+        setLoading(false)
+        return
+      }
+    }
+
     let query = supabase
       .from('timesheets')
       .select('*, user:profiles!timesheets_user_id_fkey(id, full_name, email, role, department, avatar_url, is_active, created_at, updated_at)')
       .order('submitted_at', { ascending: true })
+
     if (statusFilter !== 'all') query = query.eq('status', statusFilter)
+
+    // Scope to direct reports for managers
+    if (!isAdmin) {
+      query = query.in('user_id', reporteeIds)
+    }
+
     const { data } = await query
     setTimesheets((data || []) as unknown as TimesheetWithUser[])
     setLoading(false)
-  }, [profile, canManageProjects, statusFilter])
+  }, [profile, canManageProjects, isAdmin, statusFilter])
 
-  // Gate on profileReady so canManageProjects is accurate before we decide
-  // whether to fetch or show empty. Previously this used [profile?.id] which
-  // fired while profile was still null, causing fetchTimesheets to bail early
-  // and leave loading=true forever for managers and admins.
   useEffect(() => {
     if (!profileReady) return
     fetchTimesheets()
@@ -114,7 +137,7 @@ export default function ApprovalsPage() {
       <div>
         <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Approvals</h1>
         <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>
-          Review and approve team timesheets
+          Review and approve your team's timesheets
         </p>
       </div>
 
@@ -159,7 +182,6 @@ export default function ApprovalsPage() {
                   onMouseEnter={e => e.currentTarget.style.background = 'var(--chronos-surface-2)'}
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                 >
-                  {/* Avatar */}
                   <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 700, color: 'white', fontFamily: 'Syne, sans-serif', flexShrink: 0 }}>
                     {getInitials(ts.user?.full_name || 'U')}
                   </div>
@@ -210,7 +232,6 @@ export default function ApprovalsPage() {
                     ) : logs[ts.id].length === 0 ? (
                       <div style={{ padding: '20px', textAlign: 'center', color: 'var(--chronos-text-muted)', fontSize: '13px' }}>No time logs</div>
                     ) : (() => {
-                      // Group by date
                       const byDate: Record<string, TimeLog[]> = {}
                       for (const log of logs[ts.id]) {
                         if (!byDate[log.log_date]) byDate[log.log_date] = []
@@ -218,27 +239,22 @@ export default function ApprovalsPage() {
                       }
                       return (
                         <>
-                          {/* Table header */}
                           <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr 1fr 1fr 60px', gap: '0', padding: '8px 20px', background: 'var(--chronos-surface-2)', borderBottom: '1px solid var(--chronos-border)' }}>
                             {['Date', 'Client', 'Project', 'Task Type', 'Notes', 'Hours'].map(h => (
                               <div key={h} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>{h}</div>
                             ))}
                           </div>
-
                           {Object.entries(byDate).map(([date, dateLogs]) => {
                             const dateTotal = dateLogs.reduce((s, l) => s + l.hours, 0)
                             const d = new Date(date + 'T00:00:00')
                             const dateLabel = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
                             return (
                               <div key={date}>
-                                {/* Date heading row */}
                                 <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr 1fr 1fr 60px', gap: '0', padding: '10px 20px', background: 'rgba(99,102,241,0.05)', borderBottom: '1px solid var(--chronos-border)', borderTop: '1px solid var(--chronos-border)' }}>
                                   <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--chronos-text)', fontFamily: 'Syne, sans-serif' }}>{dateLabel}</div>
                                   <div /><div /><div /><div />
                                   <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '13px', fontWeight: 700, color: 'var(--chronos-accent)' }}>{dateTotal}h</div>
                                 </div>
-
-                                {/* Logs for this date */}
                                 {dateLogs.map(log => {
                                   const project = (log.project as { name: string; client?: { name: string } } | undefined)
                                   const taskType = (log.task_type as { name: string } | undefined)
@@ -256,8 +272,6 @@ export default function ApprovalsPage() {
                               </div>
                             )
                           })}
-
-                          {/* Grand total */}
                           <div style={{ padding: '12px 20px', display: 'flex', justifyContent: 'flex-end', borderTop: '2px solid var(--chronos-border)', background: 'var(--chronos-surface-2)' }}>
                             <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '14px' }}>
                               Weekly Total: <span style={{ color: 'var(--chronos-accent)' }}>{formatHours(ts.total_hours)}</span>
