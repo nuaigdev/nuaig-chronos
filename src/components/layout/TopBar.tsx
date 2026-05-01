@@ -22,10 +22,8 @@ const PAGE_TITLES: Record<string, string> = {
 }
 
 const QUICK_ACTIONS: Record<string, { label: string; href: string }> = {
-  '/dashboard/projects': { label: 'New Project', href: '/dashboard/projects/new' },
   '/dashboard/tasks': { label: 'New Task', href: '/dashboard/tasks/new' },
   '/dashboard/time-logs': { label: 'Log Time', href: '/dashboard/time-logs/new' },
-  '/dashboard/clients': { label: 'New Client', href: '/dashboard/clients/new' },
 }
 
 export default function TopBar() {
