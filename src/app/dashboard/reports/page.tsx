@@ -12,11 +12,20 @@ import {
   addMonths, subMonths,
   addYears, subYears,
 } from 'date-fns'
-import { Download, ChevronLeft, ChevronRight, ChevronDown, ChevronRight as ChevronRightIcon } from 'lucide-react'
+import { Download, ChevronLeft, ChevronRight, ChevronRight as ChevronRightIcon } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const supabase = createClient()
 const ACCENT = '#a78bfa'
+
+// Grid templates for the resource tab. Centralised so the column widths
+// stay aligned across the header, body rows, and totals row.
+const BULK_GRID = '2fr 1.5fr 2fr 2fr 100px'           // Resource | Dept | Client | Project | Time
+const SINGLE_DATE_COL = '1.4fr'
+const SINGLE_NOTE_COL = '2fr'
+const SINGLE_CLIENT_COL = '1.5fr'
+const SINGLE_PROJECT_COL = '1.5fr'
+const SINGLE_TIME_COL = '100px'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +47,7 @@ interface EnrichedLog extends RawLog {
   clientName: string
   userName: string
   department: string
+  managerId: string | null
 }
 
 interface ProjectDetail { id: string; name: string; client_id: string | null }
@@ -78,6 +88,18 @@ function downloadCSV(filename: string, rows: string[][], headers: string[]) {
   URL.revokeObjectURL(url)
 }
 
+// Replace anything that's awkward in a filename — OS-reserved chars, spaces,
+// commas, etc. — with underscores; collapse runs of underscores. Keeps dots
+// out of segments so the .csv extension we append isn't ambiguous.
+function sanitizeFilename(s: string): string {
+  return (s || 'untitled')
+    .replace(/[\\/:*?"<>|,]+/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+    || 'untitled'
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function ReportsPage() {
@@ -91,6 +113,10 @@ export default function ReportsPage() {
   const [logs, setLogs] = useState<EnrichedLog[]>([])
   const [clients, setClients] = useState<ClientDetail[]>([])
   const [allProfiles, setAllProfiles] = useState<ProfileDetail[]>([])
+  // Lookup of every profile referenced by the current report — includes
+  // resources who logged time AND their managers (backfilled if not active).
+  // Used by the single-resource view to show the manager name.
+  const [profileLookup, setProfileLookup] = useState<Record<string, ProfileDetail>>({})
 
   // Client tab
   const [selectedClient, setSelectedClient] = useState('')
@@ -125,7 +151,7 @@ export default function ReportsPage() {
         const { data: reps } = await supabase.from('profiles').select('id').eq('manager_id', profile.id).eq('is_active', true)
         allowedUserIds = (reps || []).map((r: { id: string }) => r.id)
         if (allowedUserIds.length === 0) {
-          setLogs([]); setClients([]); setAllProfiles([]); setLoading(false); return
+          setLogs([]); setClients([]); setAllProfiles([]); setProfileLookup({}); setLoading(false); return
         }
       } else {
         allowedUserIds = [profile.id]
@@ -146,7 +172,7 @@ export default function ReportsPage() {
       const raw = (rawLogs || []) as RawLog[]
 
       if (raw.length === 0) {
-        setLogs([]); setClients([]); setLoading(false); return
+        setLogs([]); setClients([]); setProfileLookup({}); setLoading(false); return
       }
 
       const projIds = Array.from(new Set(raw.map(l => l.project_id)))
@@ -164,6 +190,24 @@ export default function ReportsPage() {
       for (const p of projArr) projMap[p.id] = p
       const profMap: Record<string, ProfileDetail> = {}
       for (const p of userArr) profMap[p.id] = p
+
+      // Backfill manager profiles that aren't already loaded — needed for the
+      // "single resource" view header row, which displays the manager's name.
+      // Without this, an inactive or out-of-scope manager would render as "—".
+      const knownIds = new Set([...profArr.map(p => p.id), ...userArr.map(p => p.id)])
+      const missingManagerIds = Array.from(new Set(
+        userArr.map(u => u.manager_id).filter((id): id is string => !!id && !knownIds.has(id))
+      ))
+      if (missingManagerIds.length > 0) {
+        const { data: mgrData } = await supabase.from('profiles')
+          .select('id,full_name,department,manager_id').in('id', missingManagerIds)
+        for (const m of (mgrData || []) as ProfileDetail[]) {
+          if (!profMap[m.id]) profMap[m.id] = m
+        }
+      }
+      // Expose the merged profile lookup (users + their managers) for the
+      // resource view to use when rendering the manager name.
+      setProfileLookup(profMap)
 
       const clientIds = Array.from(new Set(projArr.map(p => p.client_id).filter(Boolean))) as string[]
       let clientArr: ClientDetail[] = []
@@ -186,6 +230,7 @@ export default function ReportsPage() {
           clientName: client?.name || 'No Client',
           userName: prof?.full_name || 'Unknown',
           department: prof?.department || 'Unassigned',
+          managerId: prof?.manager_id ?? null,
         }
       })
       setLogs(enriched)
@@ -230,29 +275,63 @@ export default function ReportsPage() {
     return Object.values(map).sort((a, b) => a.clientName.localeCompare(b.clientName))
   }, [logs, selectedClient])
 
-  // Resource tab: group logs → resource → client (summary) + all logs sorted by date (expanded)
+  // Resource tab: group logs → resource → (client, project) pair.
+  // The "(client, project)" granularity is required because the table now
+  // has both Client and Project columns side-by-side at the bulk level.
+  // `allLogs` is preserved for the single-resource detail view.
   const resourceData = useMemo(() => {
     let filtered = logs
     if (selectedDept) filtered = filtered.filter(l => l.department === selectedDept)
     if (selectedResource) filtered = filtered.filter(l => l.user_id === selectedResource)
 
     const map: Record<string, {
-      userId: string; userName: string; department: string; totalHours: number;
-      clients: Record<string, { clientId: string; clientName: string; hours: number }>
+      userId: string; userName: string; department: string; managerId: string | null; totalHours: number;
+      // Keyed by `${clientId}::${projectId}` so the same client appearing
+      // under multiple projects produces multiple rows (matches the new
+      // table structure: Resource | Department | Client | Project | Time).
+      clientProjects: Record<string, { clientId: string; clientName: string; projectId: string; projectName: string; hours: number }>
       allLogs: EnrichedLog[]
     }> = {}
 
     for (const log of filtered) {
-      if (!map[log.user_id]) map[log.user_id] = { userId: log.user_id, userName: log.userName, department: log.department, totalHours: 0, clients: {}, allLogs: [] }
+      if (!map[log.user_id]) {
+        map[log.user_id] = {
+          userId: log.user_id, userName: log.userName, department: log.department,
+          managerId: log.managerId, totalHours: 0, clientProjects: {}, allLogs: [],
+        }
+      }
       const rm = map[log.user_id]
       rm.totalHours += log.hours
       const cid = log.clientId || 'no-client'
-      if (!rm.clients[cid]) rm.clients[cid] = { clientId: cid, clientName: log.clientName, hours: 0 }
-      rm.clients[cid].hours += log.hours
+      const key = `${cid}::${log.project_id}`
+      if (!rm.clientProjects[key]) {
+        rm.clientProjects[key] = {
+          clientId: cid, clientName: log.clientName,
+          projectId: log.project_id, projectName: log.projectName,
+          hours: 0,
+        }
+      }
+      rm.clientProjects[key].hours += log.hours
       rm.allLogs.push(log)
     }
     return Object.values(map).sort((a, b) => a.userName.localeCompare(b.userName))
   }, [logs, selectedDept, selectedResource])
+
+  // ─── Single-resource view derivation ─────────────────────────────────────
+  //
+  // A "single resource" view is active when the user has either picked a
+  // resource from the dropdown, OR clicked a row to drill into one resource.
+  // The two paths share rendering; this resolves which one (if any) is in
+  // play and grabs the matching ResourceData object.
+  const singleResourceId = selectedResource || expandedResource || null
+  const singleResource = useMemo(
+    () => singleResourceId ? resourceData.find(r => r.userId === singleResourceId) ?? null : null,
+    [singleResourceId, resourceData]
+  )
+  const singleResourceManagerName = useMemo(() => {
+    if (!singleResource?.managerId) return '—'
+    return profileLookup[singleResource.managerId]?.full_name || '—'
+  }, [singleResource, profileLookup])
 
   // ─── Export ───────────────────────────────────────────────────────────────
 
@@ -273,23 +352,46 @@ export default function ReportsPage() {
       }
       downloadCSV(`clients_report_${startStr}_${endStr}.csv`, rows, ['Client', 'Project', 'Department', 'Resource', 'Time (h)'])
       toast.success('CSV downloaded')
-    } else {
-      const rows: string[][] = []
-      for (const res of resourceData) {
-        for (const client of Object.values(res.clients).sort((a, b) => a.clientName.localeCompare(b.clientName))) {
-          rows.push([res.userName, res.department, client.clientName, client.hours.toFixed(1)])
-        }
-        if (expandedResource === res.userId) {
-          for (const log of res.allLogs.sort((a, b) => a.log_date.localeCompare(b.log_date))) {
-            rows.push([res.userName, res.department, `  ${format(new Date(log.log_date + 'T00:00:00'), 'MMM d, yyyy')} — ${log.projectName}${log.description ? ' — ' + log.description : ''}`, log.hours.toFixed(1)])
-          }
-        }
-        rows.push([res.userName, res.department, 'RESOURCE TOTAL', res.totalHours.toFixed(1)])
-        rows.push(['', '', '', ''])
-      }
-      downloadCSV(`resource_report_${startStr}_${endStr}.csv`, rows, ['Resource', 'Department', 'Client / Date', 'Time (h)'])
-      toast.success('CSV downloaded')
+      return
     }
+
+    // ─── Resource tab ────────────────────────────────────────────────────
+    if (singleResource) {
+      // Single-resource export: per-time-log rows.
+      // Filename: FullEmployeeName_Dept_Timeperiod.csv
+      // Columns:  Resource Name | Date | Note | Client | Project | Time
+      const rows: string[][] = []
+      const sortedLogs = [...singleResource.allLogs].sort((a, b) => a.log_date.localeCompare(b.log_date))
+      for (const log of sortedLogs) {
+        rows.push([
+          singleResource.userName,
+          format(new Date(log.log_date + 'T00:00:00'), 'yyyy-MM-dd'),
+          log.description || '',
+          log.clientName,
+          log.projectName,
+          log.hours.toFixed(1),
+        ])
+      }
+      const filename = `${sanitizeFilename(singleResource.userName)}_${sanitizeFilename(singleResource.department)}_${sanitizeFilename(pLabel)}.csv`
+      downloadCSV(filename, rows, ['Resource Name', 'Date', 'Note', 'Client', 'Project', 'Time (h)'])
+      toast.success('CSV downloaded')
+      return
+    }
+
+    // Bulk resource export (all resources / all departments): one row per
+    // resource × client × project. NO time-log breakdown — per spec.
+    // Columns: Resource | Department | Client | Project | Time
+    const rows: string[][] = []
+    for (const res of resourceData) {
+      const sortedCP = Object.values(res.clientProjects).sort((a, b) =>
+        a.clientName.localeCompare(b.clientName) || a.projectName.localeCompare(b.projectName)
+      )
+      for (const cp of sortedCP) {
+        rows.push([res.userName, res.department, cp.clientName, cp.projectName, cp.hours.toFixed(1)])
+      }
+    }
+    downloadCSV(`resource_report_${startStr}_${endStr}.csv`, rows, ['Resource', 'Department', 'Client', 'Project', 'Time (h)'])
+    toast.success('CSV downloaded')
   }
 
   // ─── Styles ───────────────────────────────────────────────────────────────
@@ -326,7 +428,10 @@ export default function ReportsPage() {
           <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>{pLabel}</p>
         </div>
         <button className="btn-primary" onClick={exportCSV} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <Download size={13} /> Export CSV
+          <Download size={13} />
+          {mainTab === 'resource' && singleResource
+            ? `Export ${singleResource.userName.split(' ')[0]}`
+            : 'Export CSV'}
         </button>
       </div>
 
@@ -471,7 +576,7 @@ export default function ReportsPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <label style={{ fontSize: '13px', color: 'var(--chronos-text-muted)', flexShrink: 0 }}>Department:</label>
               <select className="input-base" style={{ maxWidth: '220px' }} value={selectedDept}
-                onChange={e => { setSelectedDept(e.target.value); setSelectedResource('') }}>
+                onChange={e => { setSelectedDept(e.target.value); setSelectedResource(''); setExpandedResource(null) }}>
                 <option value="">All Departments</option>
                 {departments.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
@@ -479,7 +584,7 @@ export default function ReportsPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <label style={{ fontSize: '13px', color: 'var(--chronos-text-muted)', flexShrink: 0 }}>Resource:</label>
               <select className="input-base" style={{ maxWidth: '240px' }} value={selectedResource}
-                onChange={e => { setSelectedResource(e.target.value); setExpandedResource(e.target.value || null) }}>
+                onChange={e => { setSelectedResource(e.target.value); setExpandedResource(null) }}>
                 <option value="">All Resources</option>
                 {resourcesInDept.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}
               </select>
@@ -490,8 +595,108 @@ export default function ReportsPage() {
             <div className="card-base" style={{ padding: '60px', textAlign: 'center', color: 'var(--chronos-text-muted)', fontSize: '14px' }}>
               No time logs found for this period.
             </div>
+          ) : singleResource ? (
+            /* ─── Single-resource detail view ─────────────────────────────
+             * Active when a resource is picked from the dropdown OR when
+             * the user clicks a row in the bulk table. Shows a header with
+             * Employee Name | Department | Manager, then a per-time-log
+             * table (Date | Note | Client | Project | Time).
+             */
+            (() => {
+              const sortedLogs = [...singleResource.allLogs].sort((a, b) => a.log_date.localeCompare(b.log_date))
+              const employeeHeaderGrid = '2fr 1.5fr 2fr'
+              const logGrid = `${SINGLE_DATE_COL} ${SINGLE_NOTE_COL} ${SINGLE_CLIENT_COL} ${SINGLE_PROJECT_COL} ${SINGLE_TIME_COL}`
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {/* Back link — only meaningful when the user got here by
+                      clicking a row, but it's harmless when they used the
+                      dropdown (clears both pieces of state). */}
+                  <button
+                    onClick={() => { setExpandedResource(null); setSelectedResource('') }}
+                    style={{
+                      alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: '6px',
+                      background: 'transparent', border: '1px solid var(--chronos-border)',
+                      borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
+                      fontSize: '12px', color: 'var(--chronos-text-muted)',
+                    }}
+                  >
+                    <ChevronLeft size={13} /> Back to all resources
+                  </button>
+
+                  <div className="card-base" style={{ overflow: 'hidden' }}>
+                    {/* Employee header — column labels */}
+                    <div style={{
+                      display: 'grid', gridTemplateColumns: employeeHeaderGrid,
+                      padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)',
+                      background: 'var(--chronos-surface-2)',
+                    }}>
+                      {['Employee Name', 'Department', 'Manager'].map(col => (
+                        <span key={col} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{col}</span>
+                      ))}
+                    </div>
+                    {/* Employee header — values */}
+                    <div style={{
+                      display: 'grid', gridTemplateColumns: employeeHeaderGrid,
+                      padding: '12px 16px', borderBottom: '1px solid var(--chronos-border)',
+                      alignItems: 'center', background: 'rgba(167,139,250,0.06)',
+                    }}>
+                      <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '15px' }}>{singleResource.userName}</span>
+                      <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{singleResource.department}</span>
+                      <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{singleResourceManagerName}</span>
+                    </div>
+
+                    {/* Time-log column headers */}
+                    <div style={{
+                      display: 'grid', gridTemplateColumns: logGrid,
+                      padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)',
+                      background: 'rgba(0,0,0,0.12)',
+                    }}>
+                      {['Date', 'Note', 'Client', 'Project', 'Time'].map(col => (
+                        <span key={col} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{col}</span>
+                      ))}
+                    </div>
+
+                    {/* Time-log rows */}
+                    {sortedLogs.length === 0 ? (
+                      <div style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--chronos-text-muted)', fontSize: '13px' }}>
+                        No time logs in this period.
+                      </div>
+                    ) : sortedLogs.map(log => (
+                      <div key={log.id} style={{
+                        display: 'grid', gridTemplateColumns: logGrid,
+                        padding: '9px 16px', borderBottom: '1px solid var(--chronos-border)',
+                        alignItems: 'center',
+                      }}>
+                        <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
+                          {format(new Date(log.log_date + 'T00:00:00'), 'EEE, MMM d')}
+                        </span>
+                        <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
+                          {log.description || '—'}
+                        </span>
+                        <span style={{ fontSize: '13px' }}>{log.clientName}</span>
+                        <span style={{ fontSize: '13px' }}>{log.projectName}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: ACCENT }}>{h(log.hours)}</span>
+                      </div>
+                    ))}
+
+                    {/* Resource total */}
+                    <div style={{
+                      display: 'grid', gridTemplateColumns: logGrid,
+                      padding: '10px 16px', alignItems: 'center',
+                      background: 'rgba(167,139,250,0.12)', borderTop: '1px solid rgba(167,139,250,0.25)',
+                    }}>
+                      <span style={{ fontSize: '12px', fontWeight: 800, color: ACCENT }}>Total</span>
+                      <span /><span /><span />
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 800, color: ACCENT }}>{h(singleResource.totalHours)}</span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()
           ) : (() => {
-            // Group by department
+            // ─── Bulk view (no single resource selected) ────────────────
+            // Group by department; one row per (resource × client × project).
+            // Clicking any row opens the single-resource detail view above.
             const byDept: Record<string, typeof resourceData> = {}
             for (const res of resourceData) {
               if (!byDept[res.department]) byDept[res.department] = []
@@ -504,11 +709,11 @@ export default function ReportsPage() {
               <div className="card-base" style={{ overflow: 'hidden' }}>
                 {/* Column headers */}
                 <div style={{
-                  display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr 100px',
+                  display: 'grid', gridTemplateColumns: BULK_GRID,
                   padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)',
                   background: 'var(--chronos-surface-2)',
                 }}>
-                  {['Resource', 'Department', 'Client', 'Time'].map(col => (
+                  {['Resource', 'Department', 'Client', 'Project', 'Time'].map(col => (
                     <span key={col} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{col}</span>
                   ))}
                 </div>
@@ -530,19 +735,22 @@ export default function ReportsPage() {
                       )}
 
                       {resources.map(res => {
-                        const isExpanded = expandedResource === res.userId
-                        const sortedClients = Object.values(res.clients).sort((a, b) => a.clientName.localeCompare(b.clientName))
-                        const sortedLogs = [...res.allLogs].sort((a, b) => a.log_date.localeCompare(b.log_date))
+                        const sortedCP = Object.values(res.clientProjects).sort((a, b) =>
+                          a.clientName.localeCompare(b.clientName) || a.projectName.localeCompare(b.projectName)
+                        )
 
                         return (
                           <div key={res.userId}>
-                            {/* Summary rows: one per client */}
-                            {!isExpanded && sortedClients.map((client, ci) => (
+                            {/* Summary rows: one per (client, project) pair.
+                                Resource name + Department appear only on the
+                                first row of the group; subsequent rows leave
+                                them blank for visual grouping. */}
+                            {sortedCP.map((cp, ri) => (
                               <div
-                                key={client.clientId}
+                                key={`${cp.clientId}::${cp.projectId}`}
                                 onClick={() => setExpandedResource(res.userId)}
                                 style={{
-                                  display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr 100px',
+                                  display: 'grid', gridTemplateColumns: BULK_GRID,
                                   padding: '10px 16px', borderBottom: '1px solid var(--chronos-border)',
                                   alignItems: 'center', cursor: 'pointer',
                                   transition: 'background 0.1s',
@@ -551,7 +759,7 @@ export default function ReportsPage() {
                                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
                               >
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  {ci === 0 && (
+                                  {ri === 0 && (
                                     <>
                                       <span style={{ color: 'var(--chronos-text-muted)', flexShrink: 0, display: 'flex' }}>
                                         <ChevronRightIcon size={13} />
@@ -560,64 +768,21 @@ export default function ReportsPage() {
                                     </>
                                   )}
                                 </div>
-                                <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{ci === 0 ? res.department : ''}</span>
-                                <span style={{ fontSize: '13px' }}>{client.clientName}</span>
-                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: ACCENT }}>{h(client.hours)}</span>
-                              </div>
-                            ))}
-
-                            {/* Expanded: collapse header row */}
-                            {isExpanded && (
-                              <div
-                                onClick={() => setExpandedResource(null)}
-                                style={{
-                                  display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr 100px',
-                                  padding: '10px 16px', borderBottom: '1px solid var(--chronos-border)',
-                                  alignItems: 'center', cursor: 'pointer',
-                                  background: 'rgba(167,139,250,0.04)',
-                                }}
-                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--chronos-surface-2)'}
-                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'rgba(167,139,250,0.04)'}
-                              >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  <span style={{ color: 'var(--chronos-text-muted)', flexShrink: 0, display: 'flex' }}>
-                                    <ChevronDown size={13} />
-                                  </span>
-                                  <span style={{ fontWeight: 600, fontSize: '13px' }}>{res.userName}</span>
-                                </div>
-                                <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{res.department}</span>
-                                <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', fontStyle: 'italic' }}>All time logs — date order</span>
-                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: ACCENT }}>{h(res.totalHours)}</span>
-                              </div>
-                            )}
-
-                            {/* Expanded: individual logs date-wise */}
-                            {isExpanded && sortedLogs.map(log => (
-                              <div key={log.id} style={{
-                                display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr 100px',
-                                padding: '7px 16px 7px 52px', borderBottom: '1px solid var(--chronos-border)',
-                                alignItems: 'center', background: 'rgba(0,0,0,0.14)',
-                              }}>
-                                <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
-                                  {format(new Date(log.log_date + 'T00:00:00'), 'EEE, MMM d')}
-                                  {log.description && (
-                                    <span style={{ marginLeft: '8px', fontStyle: 'italic', opacity: 0.7 }}>— {log.description}</span>
-                                  )}
-                                </span>
-                                <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{log.clientName}</span>
-                                <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{log.projectName}</span>
-                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 600, color: 'var(--chronos-text)' }}>{h(log.hours)}</span>
+                                <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{ri === 0 ? res.department : ''}</span>
+                                <span style={{ fontSize: '13px' }}>{cp.clientName}</span>
+                                <span style={{ fontSize: '13px' }}>{cp.projectName}</span>
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: ACCENT }}>{h(cp.hours)}</span>
                               </div>
                             ))}
 
                             {/* Resource total */}
                             <div style={{
-                              display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr 100px',
+                              display: 'grid', gridTemplateColumns: BULK_GRID,
                               padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)',
                               alignItems: 'center', background: 'rgba(167,139,250,0.08)',
                             }}>
                               <span style={{ fontSize: '11px', fontWeight: 700, color: ACCENT }}>{res.userName} Total</span>
-                              <span /><span />
+                              <span /><span /><span />
                               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 800, color: ACCENT }}>{h(res.totalHours)}</span>
                             </div>
                           </div>
@@ -627,12 +792,12 @@ export default function ReportsPage() {
                       {/* Dept total (only when showing multiple depts) */}
                       {showDeptHeaders && (
                         <div style={{
-                          display: 'grid', gridTemplateColumns: '2fr 1.5fr 2fr 100px',
+                          display: 'grid', gridTemplateColumns: BULK_GRID,
                           padding: '10px 16px', borderBottom: '1px solid var(--chronos-border)',
                           alignItems: 'center', background: 'rgba(96,165,250,0.08)',
                         }}>
                           <span style={{ fontSize: '12px', fontWeight: 800, color: '#60a5fa' }}>{dept} Department Total</span>
-                          <span /><span />
+                          <span /><span /><span />
                           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 800, color: '#60a5fa' }}>{h(deptTotal)}</span>
                         </div>
                       )}
