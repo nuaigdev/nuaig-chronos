@@ -121,7 +121,7 @@ function bars(items:{name:string;hours:number}[]):string{
 }
 
 export default function ReportsPage(){
-  const {profile,profileReady,canManageProjects,isAdmin}=useAuth()
+  const {profile,profileReady,canManageProjects}=useAuth()
   const [tab,setTab]=useState<Tab>('overview')
   const [period,setPeriod]=useState<Period>('month')
   const [loading,setLoading]=useState(true)
@@ -145,24 +145,29 @@ export default function ReportsPage(){
     if(!profile)return
     setLoading(true)
     try{
-      // Determine whose data to show:
-      //   admin        → everyone
-      //   manager      → only their direct reports
-      //   employee     → only themselves
-      let allowedUserIds: string[] | null = null // null = no restriction (admin)
-      if(isAdmin){
-        allowedUserIds = null // all users
-      } else if(canManageProjects){
-        // manager — scope to direct reports only
+      // Derive role directly from profile.role so we never rely on stale
+      // isAdmin/canManageProjects booleans from closure.
+      //   admin   → all users (no filter)
+      //   manager → direct reports only (manager_id = profile.id)
+      //   employee → self only
+      const role = profile.role
+      let allowedUserIds: string[] | null = null // null = no filter = admin sees all
+
+      if(role === 'admin'){
+        allowedUserIds = null
+      } else if(role === 'manager'){
         const {data: reps} = await supabase.from('profiles').select('id').eq('manager_id', profile.id).eq('is_active', true)
         allowedUserIds = (reps || []).map((r: {id: string}) => r.id)
+        if(allowedUserIds.length === 0){
+          setLogs([]); setProjects([]); setProfilesData([]); setTimesheets([]); setWeeklyTrend([])
+          setLoading(false); return
+        }
       } else {
         allowedUserIds = [profile.id]
       }
 
       let logsQ=supabase.from('time_logs').select('hours,log_date,project_id,user_id,task_type_id').gte('log_date',startStr).lte('log_date',endStr)
       if(allowedUserIds !== null){
-        if(allowedUserIds.length === 0){ setLogs([]); setProjects([]); setProfilesData([]); setTimesheets([]); setWeeklyTrend([]); setLoading(false); return }
         logsQ=logsQ.in('user_id', allowedUserIds)
       }
       const{data:rawLogs}=await logsQ
@@ -207,7 +212,7 @@ export default function ReportsPage(){
       }))
 
       let tsQ=supabase.from('timesheets').select('id,user_id,week_start_date,week_end_date,status,total_hours,submitted_at').gte('week_start_date',startStr).lte('week_start_date',endStr).order('week_start_date',{ascending:false})
-      if(allowedUserIds !== null){ if(allowedUserIds.length > 0) tsQ=tsQ.in('user_id', allowedUserIds) }
+      if(allowedUserIds !== null){ tsQ=tsQ.in('user_id', allowedUserIds) }
       const{data:tsRaw}=await tsQ
       const tsArr=(tsRaw||[]) as Omit<TimesheetRow,'userName'>[]
       const tsUids=Object.keys(tsArr.reduce((m,t)=>{m[t.user_id]=true;return m},{} as Record<string,true>))
@@ -215,7 +220,7 @@ export default function ReportsPage(){
       if(tsUids.length){const{data:td}=await supabase.from('profiles').select('id,full_name').in('id',tsUids);for(const p of(td||[]) as{id:string;full_name:string}[])tsNameMap[p.id]=p.full_name}
       setTimesheets(tsArr.map(t=>({...t,userName:tsNameMap[t.user_id]||'Unknown'})))
     }catch(e){console.error(e);toast.error('Failed to load report data')}finally{setLoading(false)}
-  },[profileReady,profile?.id,startStr,endStr,canManageProjects,isAdmin])
+  },[profile,startStr,endStr])
 
   useEffect(()=>{if(profileReady)fetchData()},[profileReady,fetchData])
   useEffect(()=>{setSelProject(null);setSelClient(null);setSelEmployee(null)},[tab,period])
