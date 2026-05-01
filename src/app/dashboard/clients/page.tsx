@@ -98,7 +98,7 @@ export default function ClientsPage() {
           <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Clients</h1>
           <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>{filtered.length} client{filtered.length !== 1 ? 's' : ''}</p>
         </div>
-        {canManageProjects && <button className="btn-primary" onClick={openCreate}><Plus size={14} />New Client</button>}
+
       </div>
 
       <div style={{ position: 'relative', maxWidth: '360px' }}>

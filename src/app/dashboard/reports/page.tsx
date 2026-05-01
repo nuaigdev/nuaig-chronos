@@ -878,18 +878,6 @@ export default function ReportsPage(){
             <SCard icon={<Clock size={20}/>} label="Total Hours" value={h(totalHours)} color="#60a5fa"/>
             <SCard icon={<TrendingUp size={20}/>} label="Avg per Person" value={h(empSummary.length?totalHours/empSummary.length:0)} color="#34d399"/>
           </div>
-          {deptData.length>1&&<div className="card-base" style={{padding:'20px'}}>
-            <SecTitle title="Hours by Department"/>
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={deptData} margin={{top:4,right:4,bottom:0,left:-10}}>
-                <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/>
-                <XAxis dataKey="name" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
-                <YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
-                <Tooltip {...TT} formatter={(v:number)=>[`${v.toFixed(1)}h`,'Hours']}/>
-                <Bar dataKey="hours" radius={[6,6,0,0]}>{deptData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>}
           {empSummary.length===0
             ?<div className="card-base" style={{padding:'60px',textAlign:'center',color:'var(--chronos-text-muted)',fontSize:'14px'}}>No employee data</div>
             :<div className="card-base" style={{overflow:'hidden'}}>
@@ -914,6 +902,18 @@ export default function ReportsPage(){
               ))}
             </div>
           }
+          {deptData.length>1&&<div className="card-base" style={{padding:'20px'}}>
+            <SecTitle title="Hours by Department"/>
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={deptData} margin={{top:4,right:4,bottom:0,left:-10}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false}/>
+                <XAxis dataKey="name" tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+                <YAxis tick={{fontSize:11,fill:'#64748b'}} axisLine={false} tickLine={false}/>
+                <Tooltip {...TT} formatter={(v:number)=>[`${v.toFixed(1)}h`,'Hours']}/>
+                <Bar dataKey="hours" radius={[6,6,0,0]}>{deptData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>}
         </div>
       )
     }
