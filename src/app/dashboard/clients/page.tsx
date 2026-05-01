@@ -51,7 +51,7 @@ export default function ClientsPage() {
         if (error) throw error
         toast.success('Client updated!')
       } else {
-        const { error } = await supabase.from('clients').insert({ ...form, created_by: profile!.id })
+        const { error } = await supabase.from('clients').insert({ ...form, created_by: profile!.id, company_id: profile!.company_id })
         if (error) throw error
         toast.success('Client created!')
       }

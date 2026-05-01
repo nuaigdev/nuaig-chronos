@@ -135,7 +135,7 @@ export default function ProjectsPage() {
       } else {
         const { data: newProject, error } = await supabase
           .from('projects')
-          .insert({ ...payload, created_by: profile!.id })
+          .insert({ ...payload, created_by: profile!.id, company_id: profile!.company_id })
           .select('id')
           .single()
         if (error) throw error

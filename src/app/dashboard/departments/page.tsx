@@ -13,7 +13,7 @@ import { useRouter } from 'next/navigation'
 const supabase = createClient()
 
 export default function DepartmentsPage() {
-  const { isAdmin, profileReady } = useAuth()
+  const { isAdmin, profileReady, profile } = useAuth()
   const router = useRouter()
 
   const [departments, setDepartments] = useState<DeptRow[]>([])
@@ -91,6 +91,7 @@ export default function DepartmentsPage() {
         name: createForm.name.trim().toUpperCase(),
         display_name: createForm.display_name.trim(),
         description: createForm.description.trim() || null,
+        company_id: profile!.company_id,
       })
       if (error) throw error
       toast.success(`Department "${createForm.display_name}" created`)
@@ -200,6 +201,7 @@ export default function DepartmentsPage() {
         description: newTaskDesc.trim() || null,
         sort_order: deptTaskTypes.length + 1,
         is_active: true,
+        company_id: profile!.company_id,
       })
       if (error) throw error
       toast.success('Task type added')
