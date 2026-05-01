@@ -107,19 +107,26 @@ export default function TeamPage() {
   // ── Resolve effective manager for display ────────────────────────────────
   // employee  → dept's manager_id resolved to a name
   // manager   → their direct manager_id
+  //
+  // NOTE: when viewing as a manager, `members` only contains direct reports
+  // (the manager themselves is excluded). So we also check `profile` (the
+  // logged-in user) to resolve the name when they are the dept manager.
+  const resolveManagerName = (managerId: string): string => {
+    // Check the logged-in user first (not in members list when in manager view)
+    if (profile && profile.id === managerId) return profile.full_name
+    const found = members.find(x => x.id === managerId)
+    return found?.full_name ?? '—'
+  }
+
   const resolveDisplayManager = (m: Profile): { name: string; source: 'dept' | 'direct' | 'none' } => {
     if (m.role === 'employee') {
       if (!m.department) return { name: '—', source: 'none' }
       const dept = departments.find(d => d.name === m.department)
       if (!dept?.manager_id) return { name: '—', source: 'none' }
-      const mgr = members.find(x => x.id === dept.manager_id)
-      // When manager-filtered view doesn't include all members, fall back to dept display_name manager from depts list
-      if (!mgr) return { name: '(dept manager)', source: 'dept' }
-      return { name: mgr.full_name, source: 'dept' }
+      return { name: resolveManagerName(dept.manager_id), source: 'dept' }
     }
     if (!m.manager_id) return { name: '—', source: 'none' }
-    const mgr = members.find(x => x.id === m.manager_id)
-    return { name: mgr?.full_name ?? '—', source: 'direct' }
+    return { name: resolveManagerName(m.manager_id), source: 'direct' }
   }
 
   // ── Edit member (admin only) ─────────────────────────────────────────────
