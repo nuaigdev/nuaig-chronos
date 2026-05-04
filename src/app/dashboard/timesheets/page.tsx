@@ -7,7 +7,7 @@ import { Timesheet, TimeLog, Project, TaskType, Department } from '@/types'
 import { StatusBadge, EmptyState, Modal, FormField, Select } from '@/components/ui'
 import { formatDate, formatHours, getWeekRange, getWeekDays } from '@/utils'
 import {
-  FileText, ChevronLeft, ChevronRight, Send,
+  FileText, ChevronLeft, ChevronRight, Send, BellRing,
   Plus, Trash2, Edit2, Check, X, Clock
 } from 'lucide-react'
 import { addWeeks, subWeeks, format, isAfter, startOfDay, isSameDay } from 'date-fns'
@@ -80,6 +80,7 @@ export default function TimesheetsPage() {
   const [taskTypes, setTaskTypes] = useState<TaskType[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [checkingMissed, setCheckingMissed] = useState(false)
 
   // Log form / modal
   const [showModal, setShowModal] = useState(false)
@@ -306,31 +307,84 @@ export default function TimesheetsPage() {
       .eq('id', timesheet.id)
     if (error) { toast.error('Failed to submit'); return }
 
-    // Notify all managers/admins
-    const { data: managers } = await supabase
-      .from('profiles').select('id').in('role', ['admin', 'manager'])
-    if (managers?.length) {
-      await supabase.from('notifications').insert(
-        managers.map(m => ({
-          user_id: m.id,
-          type: 'timesheet_submitted' as const,
-          title: 'Timesheet Submitted',
-          message: `${profile?.full_name} submitted a timesheet for the week of ${format(weekStart, 'MMM d, yyyy')}.`,
-          related_id: timesheet.id,
-        }))
-      )
+    // Notify only the submitter's direct manager (from profiles.manager_id)
+    if (profile?.manager_id) {
+      await supabase.from('notifications').insert({
+        user_id: profile.manager_id,
+        type: 'timesheet_submitted' as const,
+        title: 'Timesheet Submitted',
+        message: `${profile?.full_name} submitted a timesheet for the week of ${format(weekStart, 'MMM d, yyyy')}.`,
+        related_id: timesheet.id,
+      })
     }
 
     toast.success('Timesheet submitted!')
     await fetchTimesheet()
   }
 
+  // ── check missed timesheets (manager) ─────────────────────────────────────
+
+  const checkMissedTimesheets = async (silent = false) => {
+    if (!profile || !canManageProjects) return
+    setCheckingMissed(true)
+    try {
+      const { start: prevStart } = getWeekRange(subWeeks(new Date(), 1))
+      const prevWeekStartStr = format(prevStart, 'yyyy-MM-dd')
+
+      const { data: reports } = await supabase
+        .from('profiles').select('id, full_name')
+        .eq('manager_id', profile.id).eq('is_active', true)
+
+      if (!reports?.length) {
+        if (!silent) toast('No direct reports found under your account.')
+        return
+      }
+
+      const reportIds = reports.map(r => r.id)
+      const { data: submitted } = await supabase
+        .from('timesheets').select('user_id')
+        .in('user_id', reportIds)
+        .eq('week_start_date', prevWeekStartStr)
+        .in('status', ['submitted', 'approved'])
+
+      const submittedIdSet = new Set((submitted || []).map(s => s.user_id))
+      const missed = reports.filter(r => !submittedIdSet.has(r.id))
+
+      if (missed.length === 0) {
+        if (!silent) toast.success('All team members submitted last week!')
+        return
+      }
+
+      const weekLabel = format(prevStart, 'MMM d, yyyy')
+      const missedNames = missed.map(m => m.full_name).join(', ')
+
+      await supabase.from('notifications').insert({
+        user_id: profile.id,
+        type: 'pending_approval_alert' as const,
+        title: 'Missing Timesheet Submissions',
+        message: `These team members have not submitted for the week of ${weekLabel}: ${missedNames}`,
+      })
+
+      await supabase.from('notifications').insert(
+        missed.map(m => ({
+          user_id: m.id,
+          type: 'timesheet_reminder' as const,
+          title: 'Timesheet Not Submitted',
+          message: `You have not submitted your timesheet for the week of ${weekLabel}. Please submit it soon.`,
+        }))
+      )
+
+      toast.success(`Notified ${missed.length} team member${missed.length > 1 ? 's' : ''}`)
+    } catch {
+      toast.error('Failed to check missed timesheets')
+    } finally {
+      setCheckingMissed(false)
+    }
+  }
+
   // ── derived ────────────────────────────────────────────────────────────────
 
   const canEdit = isCurrentOrPastWeek && (!timesheet || timesheetEditable(timesheet.status))
-  const canSubmit = timesheet && (timesheet.status === 'draft' || timesheet.status === 'rejected') && timeLogs.length > 0
-  const totalHours = timeLogs.reduce((s, l) => s + l.hours, 0)
-
   const logsByDay = useMemo(() => {
     const map: Record<string, TimeLogFull[]> = {}
     for (const log of timeLogs) {
@@ -339,6 +393,28 @@ export default function TimesheetsPage() {
     }
     return map
   }, [timeLogs])
+
+  // Mon–Fri of this week that are today or in the past (no future days, no weekends)
+  const requiredWorkdays = useMemo(() => {
+    const today = startOfDay(new Date())
+    return weekDays.filter(d => {
+      const dow = d.getDay() // 0=Sun,6=Sat
+      if (dow === 0 || dow === 6) return false  // skip weekends
+      return !isAfter(startOfDay(d), today)     // skip future days
+    })
+  }, [weekDays])
+
+  // Every required workday must have at least one log entry
+  const allWorkdaysFilled = useMemo(() => {
+    if (requiredWorkdays.length === 0) return false
+    return requiredWorkdays.every(d => {
+      const dayStr = format(d, 'yyyy-MM-dd')
+      return (logsByDay[dayStr] || []).length > 0
+    })
+  }, [requiredWorkdays, logsByDay])
+
+  const canSubmit = timesheet && (timesheet.status === 'draft' || timesheet.status === 'rejected') && allWorkdaysFilled
+  const totalHours = timeLogs.reduce((s, l) => s + l.hours, 0)
 
   const tsStatus = timesheet?.status || 'draft'
   const reviewer = (timesheet as Timesheet & { reviewer?: { full_name: string } } | null)?.reviewer
@@ -369,6 +445,11 @@ export default function TimesheetsPage() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {canManageProjects && (
+            <button className="btn-secondary" onClick={() => checkMissedTimesheets(false)} disabled={checkingMissed}>
+              <BellRing size={14} />{checkingMissed ? 'Checking...' : 'Check Missing'}
+            </button>
+          )}
           {canSubmit && (
             <button className="btn-primary" onClick={submitTimesheet}>
               <Send size={14} />{tsStatus === 'rejected' ? 'Resubmit' : 'Submit for Approval'}
