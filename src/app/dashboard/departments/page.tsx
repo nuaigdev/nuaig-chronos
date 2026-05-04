@@ -6,7 +6,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { Profile, DeptRow, TaskType } from '@/types'
 import { EmptyState, Modal, FormField, Select } from '@/components/ui'
 import { getInitials } from '@/utils'
-import { Building2, Users, ChevronDown, ChevronRight, UserCog, Plus, Tag, Pencil } from 'lucide-react'
+import { Building2, Users, ChevronDown, ChevronRight, UserCog, Plus, Tag, Pencil, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useRouter } from 'next/navigation'
 
@@ -43,6 +43,12 @@ export default function DepartmentsPage() {
   const [newTaskDesc, setNewTaskDesc] = useState('')
   const [savingTask, setSavingTask] = useState(false)
 
+  // Edit task type modal
+  const [editTaskTypeModal, setEditTaskTypeModal] = useState<TaskType | null>(null)
+  const [editTaskName, setEditTaskName] = useState('')
+  const [editTaskDesc, setEditTaskDesc] = useState('')
+  const [savingEditTask, setSavingEditTask] = useState(false)
+
   // Redirect users who are neither admin nor manager
   useEffect(() => {
     if (profileReady && !isAdmin && !isManager) router.replace('/dashboard')
@@ -70,7 +76,7 @@ export default function DepartmentsPage() {
   }, [profileReady, isAdmin, isManager, fetchData])
 
   // ── Determine what this manager can edit ─────────────────────────────────
-  // A manager can only add/toggle task types for departments where they are
+  // A manager can only edit/delete task types for departments where they are
   // the designated manager_id.
   const managedDeptNames: string[] = isAdmin
     ? [] // not used for admins
@@ -93,12 +99,10 @@ export default function DepartmentsPage() {
   const handleCreate = async () => {
     if (!createForm.name.trim()) { toast.error('Department code/name is required'); return }
     if (!createForm.display_name.trim()) { toast.error('Display name is required'); return }
-
     if (!/^[A-Za-z0-9_-]+$/.test(createForm.name.trim())) {
       toast.error('Department code must be alphanumeric (letters, numbers, _ or -)')
       return
     }
-
     setCreating(true)
     try {
       const { error } = await supabase.from('departments').insert({
@@ -133,10 +137,8 @@ export default function DepartmentsPage() {
       toast.error('Department code must be alphanumeric (letters, numbers, _ or -)')
       return
     }
-
     const newName = editForm.name.trim().toUpperCase()
     const oldName = editModal.name
-
     setEditing(true)
     try {
       const { error } = await supabase.from('departments').update({
@@ -144,9 +146,7 @@ export default function DepartmentsPage() {
         display_name: editForm.display_name.trim(),
         description: editForm.description.trim() || null,
       }).eq('id', editModal.id)
-
       if (error) throw error
-
       if (newName !== oldName) {
         const [{ error: profError }, { error: ttError }] = await Promise.all([
           supabase.from('profiles').update({ department: newName }).eq('department', oldName),
@@ -155,7 +155,6 @@ export default function DepartmentsPage() {
         if (profError) console.error('Profile cascade error:', profError)
         if (ttError) console.error('Task type cascade error:', ttError)
       }
-
       toast.success('Department updated')
       setEditModal(null)
       fetchData()
@@ -192,7 +191,7 @@ export default function DepartmentsPage() {
     }
   }
 
-  // ── Add task type (admin: any dept; manager: their dept only) ─────────────
+  // ── Add task type ─────────────────────────────────────────────────────────
 
   const openTaskTypeModal = (dept: DeptRow) => {
     setTaskTypeModal(dept)
@@ -225,13 +224,45 @@ export default function DepartmentsPage() {
     }
   }
 
-  const toggleTaskType = async (id: string, current: boolean, deptName: string) => {
+  // ── Edit task type name ───────────────────────────────────────────────────
+
+  const openEditTaskType = (tt: TaskType) => {
+    setEditTaskTypeModal(tt)
+    setEditTaskName(tt.name)
+    setEditTaskDesc(tt.description || '')
+  }
+
+  const saveEditTaskType = async () => {
+    if (!editTaskTypeModal) return
+    if (!editTaskName.trim()) { toast.error('Task type name is required'); return }
+    setSavingEditTask(true)
+    try {
+      const { error } = await supabase
+        .from('task_types')
+        .update({ name: editTaskName.trim(), description: editTaskDesc.trim() || null })
+        .eq('id', editTaskTypeModal.id)
+      if (error) throw error
+      toast.success('Task type updated')
+      setEditTaskTypeModal(null)
+      fetchData()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Error updating task type')
+    } finally {
+      setSavingEditTask(false)
+    }
+  }
+
+  // ── Delete task type ──────────────────────────────────────────────────────
+
+  const deleteTaskType = async (id: string, name: string, deptName: string) => {
     if (!canEditTaskTypesFor(deptName)) {
       toast.error('You can only manage task types for your own department')
       return
     }
-    await supabase.from('task_types').update({ is_active: !current }).eq('id', id)
-    toast.success(current ? 'Task type deactivated' : 'Task type activated')
+    if (!confirm(`Delete task type "${name}"? This cannot be undone.`)) return
+    const { error } = await supabase.from('task_types').delete().eq('id', id)
+    if (error) { toast.error('Failed to delete task type'); return }
+    toast.success(`"${name}" deleted`)
     fetchData()
   }
 
@@ -269,7 +300,6 @@ export default function DepartmentsPage() {
               : 'View departments and manage task types for your department'}
           </p>
         </div>
-        {/* Only admins can create new departments */}
         {isAdmin && (
           <button
             className="btn-primary"
@@ -292,8 +322,8 @@ export default function DepartmentsPage() {
           <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '4px' }}>Active Members</div>
         </div>
         <div className="card-base" style={{ padding: '16px', textAlign: 'center' }}>
-          <div style={{ fontSize: '24px', fontFamily: 'Syne, sans-serif', fontWeight: 800, color: '#a78bfa' }}>{taskTypes.filter(t => t.is_active).length}</div>
-          <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '4px' }}>Active Task Types</div>
+          <div style={{ fontSize: '24px', fontFamily: 'Syne, sans-serif', fontWeight: 800, color: '#a78bfa' }}>{taskTypes.length}</div>
+          <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '4px' }}>Task Types</div>
         </div>
       </div>
 
@@ -302,7 +332,7 @@ export default function DepartmentsPage() {
         <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.2)', fontSize: '13px', color: 'var(--chronos-accent)', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Tag size={14} />
           {managedDeptNames.length > 0
-            ? `You can add and toggle task types for: ${managedDeptNames.join(', ')}`
+            ? `You can add, edit, and delete task types for: ${managedDeptNames.join(', ')}`
             : 'You are not set as the manager of any department yet. Contact an admin to be assigned.'}
         </div>
       )}
@@ -333,7 +363,6 @@ export default function DepartmentsPage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '15px' }}>{dept.name}</span>
                       <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>— {dept.display_name}</span>
-                      {/* Badge shown to managers for their own dept */}
                       {isManager && !isAdmin && managedDeptNames.includes(dept.name) && (
                         <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '100px', background: 'rgba(99,102,241,0.12)', color: 'var(--chronos-accent)', fontWeight: 600 }}>
                           Your Department
@@ -348,12 +377,11 @@ export default function DepartmentsPage() {
                         <Users size={11} />{deptMembers.length} member{deptMembers.length !== 1 ? 's' : ''}
                       </span>
                       <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <Tag size={11} />{deptTaskTypes.filter(t => t.is_active).length} task types
+                        <Tag size={11} />{deptTaskTypes.length} task type{deptTaskTypes.length !== 1 ? 's' : ''}
                       </span>
                     </div>
                   </div>
 
-                  {/* Action buttons — admin only for Edit / Manager; managers see nothing here */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '8px' }}>
                     {dept.manager ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 10px', borderRadius: '8px', background: 'var(--chronos-surface-2)', border: '1px solid var(--chronos-border)', fontSize: '12px' }}>
@@ -368,7 +396,6 @@ export default function DepartmentsPage() {
 
                     {isAdmin && (
                       <>
-                        {/* Edit department button — admin only */}
                         <button
                           onClick={e => { e.stopPropagation(); openEditModal(dept) }}
                           title="Edit department"
@@ -378,8 +405,6 @@ export default function DepartmentsPage() {
                         >
                           <Pencil size={11} />Edit
                         </button>
-
-                        {/* Assign manager button — admin only */}
                         <button
                           onClick={e => { e.stopPropagation(); openManagerModal(dept) }}
                           title="Change manager"
@@ -393,7 +418,9 @@ export default function DepartmentsPage() {
                     )}
                   </div>
 
-                  {isExpanded ? <ChevronDown size={14} style={{ color: 'var(--chronos-text-muted)', flexShrink: 0 }} /> : <ChevronRight size={14} style={{ color: 'var(--chronos-text-muted)', flexShrink: 0 }} />}
+                  {isExpanded
+                    ? <ChevronDown size={14} style={{ color: 'var(--chronos-text-muted)', flexShrink: 0 }} />
+                    : <ChevronRight size={14} style={{ color: 'var(--chronos-text-muted)', flexShrink: 0 }} />}
                 </div>
 
                 {/* Expanded detail */}
@@ -437,9 +464,8 @@ export default function DepartmentsPage() {
                       <div style={{ padding: '16px 20px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                           <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--chronos-text-muted)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                            Task Types ({deptTaskTypes.filter(t => t.is_active).length} active)
+                            Task Types ({deptTaskTypes.length})
                           </div>
-                          {/* Add task type button — visible to admin always, and to manager for their dept */}
                           {canEditTasks && (
                             <button
                               onClick={() => openTaskTypeModal(dept)}
@@ -456,20 +482,33 @@ export default function DepartmentsPage() {
                         ) : (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                             {deptTaskTypes.map(tt => (
-                              <div key={tt.id} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: tt.is_active ? 'var(--chronos-success)' : 'var(--chronos-text-muted)', flexShrink: 0 }} />
-                                <span style={{ fontSize: '13px', color: tt.is_active ? 'var(--chronos-text)' : 'var(--chronos-text-muted)', flex: 1, textDecoration: tt.is_active ? 'none' : 'line-through' }}>{tt.name}</span>
-                                {/* Toggle button — admin always; manager only for their dept */}
+                              <div
+                                key={tt.id}
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                              >
+                                <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--chronos-accent)', flexShrink: 0 }} />
+                                <span style={{ fontSize: '13px', color: 'var(--chronos-text)', flex: 1 }}>{tt.name}</span>
                                 {canEditTasks && (
-                                  <button
-                                    onClick={() => toggleTaskType(tt.id, tt.is_active, dept.name)}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '2px', fontSize: '11px' }}
-                                    title={tt.is_active ? 'Deactivate' : 'Activate'}
-                                    onMouseEnter={e => e.currentTarget.style.color = tt.is_active ? 'var(--chronos-danger)' : 'var(--chronos-success)'}
-                                    onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
-                                  >
-                                    <Pencil size={11} />
-                                  </button>
+                                  <div style={{ display: 'flex', gap: '2px' }}>
+                                    <button
+                                      onClick={() => openEditTaskType(tt)}
+                                      title="Edit task type"
+                                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '3px 4px', borderRadius: '4px', display: 'flex', alignItems: 'center', lineHeight: 1 }}
+                                      onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-accent)'}
+                                      onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                                    >
+                                      <Pencil size={11} />
+                                    </button>
+                                    <button
+                                      onClick={() => deleteTaskType(tt.id, tt.name, dept.name)}
+                                      title="Delete task type"
+                                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '3px 4px', borderRadius: '4px', display: 'flex', alignItems: 'center', lineHeight: 1 }}
+                                      onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-danger)'}
+                                      onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                                    >
+                                      <Trash2 size={11} />
+                                    </button>
+                                  </div>
                                 )}
                               </div>
                             ))}
@@ -489,34 +528,15 @@ export default function DepartmentsPage() {
       <Modal isOpen={createModal} onClose={() => setCreateModal(false)} title="Create Department" size="sm">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <FormField label="Department Code *">
-            <input
-              className="input-base"
-              placeholder="e.g. DESIGN"
-              value={createForm.name}
-              onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))}
-            />
-            <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '4px' }}>
-              Short identifier, e.g. DESIGN or FINANCE. Will be uppercased.
-            </p>
+            <input className="input-base" placeholder="e.g. DESIGN" value={createForm.name} onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} />
+            <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '4px' }}>Short identifier, e.g. DESIGN or FINANCE. Will be uppercased.</p>
           </FormField>
           <FormField label="Display Name *">
-            <input
-              className="input-base"
-              placeholder="e.g. Design & UX"
-              value={createForm.display_name}
-              onChange={e => setCreateForm(f => ({ ...f, display_name: e.target.value }))}
-            />
-            <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '4px' }}>
-              Full readable name shown throughout the app.
-            </p>
+            <input className="input-base" placeholder="e.g. Design & UX" value={createForm.display_name} onChange={e => setCreateForm(f => ({ ...f, display_name: e.target.value }))} />
+            <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '4px' }}>Full readable name shown throughout the app.</p>
           </FormField>
           <FormField label="Description">
-            <input
-              className="input-base"
-              placeholder="Optional — what this department does"
-              value={createForm.description}
-              onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))}
-            />
+            <input className="input-base" placeholder="Optional — what this department does" value={createForm.description} onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))} />
           </FormField>
           <div style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.2)', fontSize: '12px', color: 'var(--chronos-accent)' }}>
             After creating a department you can assign a manager and add task types by expanding the row.
@@ -532,31 +552,14 @@ export default function DepartmentsPage() {
       <Modal isOpen={!!editModal} onClose={() => setEditModal(null)} title={`Edit Department — ${editModal?.name}`} size="sm">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <FormField label="Department Code *">
-            <input
-              className="input-base"
-              placeholder="e.g. DESIGN"
-              value={editForm.name}
-              onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
-            />
-            <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '4px' }}>
-              Changing this code will update it everywhere it is used (profiles, task types).
-            </p>
+            <input className="input-base" placeholder="e.g. DESIGN" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
+            <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '4px' }}>Changing this code will update it everywhere it is used (profiles, task types).</p>
           </FormField>
           <FormField label="Display Name *">
-            <input
-              className="input-base"
-              placeholder="e.g. Design & UX"
-              value={editForm.display_name}
-              onChange={e => setEditForm(f => ({ ...f, display_name: e.target.value }))}
-            />
+            <input className="input-base" placeholder="e.g. Design & UX" value={editForm.display_name} onChange={e => setEditForm(f => ({ ...f, display_name: e.target.value }))} />
           </FormField>
           <FormField label="Description">
-            <input
-              className="input-base"
-              placeholder="Optional — what this department does"
-              value={editForm.description}
-              onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
-            />
+            <input className="input-base" placeholder="Optional — what this department does" value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} />
           </FormField>
           {editForm.name.toUpperCase() !== editModal?.name && (
             <div style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(251,191,36,0.07)', border: '1px solid rgba(251,191,36,0.3)', fontSize: '12px', color: '#fbbf24' }}>
@@ -574,16 +577,10 @@ export default function DepartmentsPage() {
       <Modal isOpen={!!managerModal} onClose={() => setManagerModal(null)} title={`Set Manager — ${managerModal?.name}`} size="sm">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <p style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>
-            Select the manager for the <strong>{managerModal?.name}</strong> department.
-            Only users with Manager or Admin role are listed. A single person can manage multiple departments.
+            Select the manager for the <strong>{managerModal?.name}</strong> department. Only users with Manager or Admin role are listed. A single person can manage multiple departments.
           </p>
           <FormField label="Department Manager">
-            <Select
-              value={selectedManager}
-              onChange={v => setSelectedManager(v)}
-              options={managerOptions}
-              placeholder="Select manager…"
-            />
+            <Select value={selectedManager} onChange={v => setSelectedManager(v)} options={managerOptions} placeholder="Select manager…" />
           </FormField>
           <div style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.2)', fontSize: '12px', color: 'var(--chronos-accent)' }}>
             Note: This sets the department's responsible manager. Individual employees' direct line managers are managed separately on the Team page.
@@ -595,28 +592,34 @@ export default function DepartmentsPage() {
         </div>
       </Modal>
 
-      {/* ── Task Type Modal (admin: any; manager: their dept) ── */}
+      {/* ── Add Task Type Modal ── */}
       <Modal isOpen={!!taskTypeModal} onClose={() => setTaskTypeModal(null)} title={`Add Task Type — ${taskTypeModal?.name}`} size="sm">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <FormField label="Task Type Name *">
-            <input
-              className="input-base"
-              placeholder="e.g. Client Workshops"
-              value={newTaskName}
-              onChange={e => setNewTaskName(e.target.value)}
-            />
+            <input className="input-base" placeholder="e.g. Client Workshops" value={newTaskName} onChange={e => setNewTaskName(e.target.value)} autoFocus />
           </FormField>
           <FormField label="Description">
-            <input
-              className="input-base"
-              placeholder="Optional description"
-              value={newTaskDesc}
-              onChange={e => setNewTaskDesc(e.target.value)}
-            />
+            <input className="input-base" placeholder="Optional description" value={newTaskDesc} onChange={e => setNewTaskDesc(e.target.value)} />
           </FormField>
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
             <button className="btn-secondary" onClick={() => setTaskTypeModal(null)}>Cancel</button>
             <button className="btn-primary" onClick={saveTaskType} disabled={savingTask}>{savingTask ? 'Adding…' : 'Add Task Type'}</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Edit Task Type Modal ── */}
+      <Modal isOpen={!!editTaskTypeModal} onClose={() => setEditTaskTypeModal(null)} title="Edit Task Type" size="sm">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <FormField label="Task Type Name *">
+            <input className="input-base" placeholder="e.g. Client Workshops" value={editTaskName} onChange={e => setEditTaskName(e.target.value)} autoFocus />
+          </FormField>
+          <FormField label="Description">
+            <input className="input-base" placeholder="Optional description" value={editTaskDesc} onChange={e => setEditTaskDesc(e.target.value)} />
+          </FormField>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn-secondary" onClick={() => setEditTaskTypeModal(null)}>Cancel</button>
+            <button className="btn-primary" onClick={saveEditTaskType} disabled={savingEditTask}>{savingEditTask ? 'Saving…' : 'Save Changes'}</button>
           </div>
         </div>
       </Modal>
