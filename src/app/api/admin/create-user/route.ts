@@ -75,6 +75,21 @@ export async function POST(req: NextRequest) {
     // 4. Upsert profile row with all fields including company_id
     //    (the handle_new_user trigger fires and creates a basic row;
     //     we upsert to add department, manager_id etc.)
+
+    // For employees: resolve manager_id from their department so new employees
+    // added AFTER the manager is already set on the department are handled correctly.
+    let resolvedManagerId: string | null = null
+    if ((user_role === 'manager' || user_role === 'admin') && manager_id) {
+      resolvedManagerId = manager_id
+    } else if (user_role === 'employee' && user_dept) {
+      const { data: deptRow } = await adminClient
+        .from('departments')
+        .select('manager_id')
+        .eq('name', user_dept)
+        .single()
+      resolvedManagerId = deptRow?.manager_id ?? null
+    }
+
     const profilePayload: Record<string, unknown> = {
       id: newUser.user.id,
       email: user_email.trim().toLowerCase(),
@@ -82,7 +97,7 @@ export async function POST(req: NextRequest) {
       role: user_role ?? 'employee',
       department: user_dept ?? null,
       company_id,
-      manager_id: (user_role === 'manager' && manager_id) ? manager_id : null,
+      manager_id: resolvedManagerId,
     }
 
     const { error: profileError } = await adminClient

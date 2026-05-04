@@ -13,7 +13,7 @@ import { useRouter } from 'next/navigation'
 const supabase = createClient()
 
 export default function DepartmentsPage() {
-  const { isAdmin, profileReady, profile } = useAuth()
+  const { isAdmin, isManager, profileReady, profile } = useAuth()
   const router = useRouter()
 
   const [departments, setDepartments] = useState<DeptRow[]>([])
@@ -22,31 +22,31 @@ export default function DepartmentsPage() {
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
 
-  // Create department modal
+  // Create department modal (admin only)
   const [createModal, setCreateModal] = useState(false)
   const [createForm, setCreateForm] = useState({ name: '', display_name: '', description: '' })
   const [creating, setCreating] = useState(false)
 
-  // Edit department modal
+  // Edit department modal (admin only)
   const [editModal, setEditModal] = useState<DeptRow | null>(null)
   const [editForm, setEditForm] = useState({ name: '', display_name: '', description: '' })
   const [editing, setEditing] = useState(false)
 
-  // Manager modal
+  // Manager modal (admin only)
   const [managerModal, setManagerModal] = useState<DeptRow | null>(null)
   const [selectedManager, setSelectedManager] = useState('')
   const [savingManager, setSavingManager] = useState(false)
 
-  // Add task type modal
+  // Add task type modal (admin: any dept; manager: their own dept only)
   const [taskTypeModal, setTaskTypeModal] = useState<DeptRow | null>(null)
   const [newTaskName, setNewTaskName] = useState('')
   const [newTaskDesc, setNewTaskDesc] = useState('')
   const [savingTask, setSavingTask] = useState(false)
 
-  // Redirect non-admins
+  // Redirect users who are neither admin nor manager
   useEffect(() => {
-    if (profileReady && !isAdmin) router.replace('/dashboard')
-  }, [profileReady, isAdmin, router])
+    if (profileReady && !isAdmin && !isManager) router.replace('/dashboard')
+  }, [profileReady, isAdmin, isManager, router])
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -65,11 +65,25 @@ export default function DepartmentsPage() {
   }, [])
 
   useEffect(() => {
-    if (!profileReady || !isAdmin) return
+    if (!profileReady || (!isAdmin && !isManager)) return
     fetchData()
-  }, [profileReady, isAdmin, fetchData])
+  }, [profileReady, isAdmin, isManager, fetchData])
 
-  // ── Create department ─────────────────────────────────────────────────────
+  // ── Determine what this manager can edit ─────────────────────────────────
+  // A manager can only add/toggle task types for departments where they are
+  // the designated manager_id.
+  const managedDeptNames: string[] = isAdmin
+    ? [] // not used for admins
+    : departments
+        .filter(d => d.manager_id === profile?.id)
+        .map(d => d.name)
+
+  const canEditTaskTypesFor = (deptName: string): boolean => {
+    if (isAdmin) return true
+    return managedDeptNames.includes(deptName)
+  }
+
+  // ── Create department (admin only) ────────────────────────────────────────
 
   const openCreateModal = () => {
     setCreateForm({ name: '', display_name: '', description: '' })
@@ -104,7 +118,7 @@ export default function DepartmentsPage() {
     }
   }
 
-  // ── Edit department ───────────────────────────────────────────────────────
+  // ── Edit department (admin only) ──────────────────────────────────────────
 
   const openEditModal = (dept: DeptRow) => {
     setEditModal(dept)
@@ -125,8 +139,6 @@ export default function DepartmentsPage() {
 
     setEditing(true)
     try {
-      // If department name (code) is changing, we must cascade to profiles and task_types
-      // The migration 012 handles this via a trigger, but we do it manually here too as a safety net
       const { error } = await supabase.from('departments').update({
         name: newName,
         display_name: editForm.display_name.trim(),
@@ -135,7 +147,6 @@ export default function DepartmentsPage() {
 
       if (error) throw error
 
-      // If name changed, cascade update to profiles.department and task_types.department
       if (newName !== oldName) {
         const [{ error: profError }, { error: ttError }] = await Promise.all([
           supabase.from('profiles').update({ department: newName }).eq('department', oldName),
@@ -155,7 +166,7 @@ export default function DepartmentsPage() {
     }
   }
 
-  // ── Manager assignment ────────────────────────────────────────────────────
+  // ── Manager assignment (admin only) ───────────────────────────────────────
 
   const openManagerModal = (dept: DeptRow) => {
     setManagerModal(dept)
@@ -181,7 +192,7 @@ export default function DepartmentsPage() {
     }
   }
 
-  // ── Add task type ─────────────────────────────────────────────────────────
+  // ── Add task type (admin: any dept; manager: their dept only) ─────────────
 
   const openTaskTypeModal = (dept: DeptRow) => {
     setTaskTypeModal(dept)
@@ -214,7 +225,11 @@ export default function DepartmentsPage() {
     }
   }
 
-  const toggleTaskType = async (id: string, current: boolean) => {
+  const toggleTaskType = async (id: string, current: boolean, deptName: string) => {
+    if (!canEditTaskTypesFor(deptName)) {
+      toast.error('You can only manage task types for your own department')
+      return
+    }
     await supabase.from('task_types').update({ is_active: !current }).eq('id', id)
     toast.success(current ? 'Task type deactivated' : 'Task type activated')
     fetchData()
@@ -249,16 +264,21 @@ export default function DepartmentsPage() {
         <div>
           <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Departments</h1>
           <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>
-            Manage department structure, managers, members and task types
+            {isAdmin
+              ? 'Manage department structure, managers, members and task types'
+              : 'View departments and manage task types for your department'}
           </p>
         </div>
-        <button
-          className="btn-primary"
-          onClick={openCreateModal}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}
-        >
-          <Plus size={14} />New Department
-        </button>
+        {/* Only admins can create new departments */}
+        {isAdmin && (
+          <button
+            className="btn-primary"
+            onClick={openCreateModal}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}
+          >
+            <Plus size={14} />New Department
+          </button>
+        )}
       </div>
 
       {/* Summary bar */}
@@ -277,6 +297,16 @@ export default function DepartmentsPage() {
         </div>
       </div>
 
+      {/* Manager notice banner */}
+      {isManager && !isAdmin && (
+        <div style={{ padding: '12px 16px', borderRadius: '8px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.2)', fontSize: '13px', color: 'var(--chronos-accent)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Tag size={14} />
+          {managedDeptNames.length > 0
+            ? `You can add and toggle task types for: ${managedDeptNames.join(', ')}`
+            : 'You are not set as the manager of any department yet. Contact an admin to be assigned.'}
+        </div>
+      )}
+
       {departments.length === 0 ? (
         <EmptyState icon={<Building2 size={28} />} title="No departments found" description="Create your first department using the button above." />
       ) : (
@@ -285,6 +315,7 @@ export default function DepartmentsPage() {
             const deptMembers = getDeptMembers(dept.name)
             const deptTaskTypes = getDeptTaskTypes(dept.name)
             const isExpanded = expanded === dept.id
+            const canEditTasks = canEditTaskTypesFor(dept.name)
 
             return (
               <div key={dept.id} className="card-base" style={{ overflow: 'hidden' }}>
@@ -302,6 +333,12 @@ export default function DepartmentsPage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '15px' }}>{dept.name}</span>
                       <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>— {dept.display_name}</span>
+                      {/* Badge shown to managers for their own dept */}
+                      {isManager && !isAdmin && managedDeptNames.includes(dept.name) && (
+                        <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '100px', background: 'rgba(99,102,241,0.12)', color: 'var(--chronos-accent)', fontWeight: 600 }}>
+                          Your Department
+                        </span>
+                      )}
                     </div>
                     {dept.description && (
                       <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '2px' }}>{dept.description}</div>
@@ -316,7 +353,7 @@ export default function DepartmentsPage() {
                     </div>
                   </div>
 
-                  {/* Action buttons */}
+                  {/* Action buttons — admin only for Edit / Manager; managers see nothing here */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '8px' }}>
                     {dept.manager ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 10px', borderRadius: '8px', background: 'var(--chronos-surface-2)', border: '1px solid var(--chronos-border)', fontSize: '12px' }}>
@@ -329,26 +366,31 @@ export default function DepartmentsPage() {
                       <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', fontStyle: 'italic' }}>No manager</span>
                     )}
 
-                    {/* Edit department button */}
-                    <button
-                      onClick={e => { e.stopPropagation(); openEditModal(dept) }}
-                      title="Edit department"
-                      style={{ background: 'none', border: '1px solid var(--chronos-border)', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px 8px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}
-                      onMouseEnter={e => { e.currentTarget.style.color = '#34d399'; e.currentTarget.style.borderColor = '#34d399' }}
-                      onMouseLeave={e => { e.currentTarget.style.color = 'var(--chronos-text-muted)'; e.currentTarget.style.borderColor = 'var(--chronos-border)' }}
-                    >
-                      <Pencil size={11} />Edit
-                    </button>
+                    {isAdmin && (
+                      <>
+                        {/* Edit department button — admin only */}
+                        <button
+                          onClick={e => { e.stopPropagation(); openEditModal(dept) }}
+                          title="Edit department"
+                          style={{ background: 'none', border: '1px solid var(--chronos-border)', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px 8px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}
+                          onMouseEnter={e => { e.currentTarget.style.color = '#34d399'; e.currentTarget.style.borderColor = '#34d399' }}
+                          onMouseLeave={e => { e.currentTarget.style.color = 'var(--chronos-text-muted)'; e.currentTarget.style.borderColor = 'var(--chronos-border)' }}
+                        >
+                          <Pencil size={11} />Edit
+                        </button>
 
-                    <button
-                      onClick={e => { e.stopPropagation(); openManagerModal(dept) }}
-                      title="Change manager"
-                      style={{ background: 'none', border: '1px solid var(--chronos-border)', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px 8px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}
-                      onMouseEnter={e => { e.currentTarget.style.color = 'var(--chronos-accent)'; e.currentTarget.style.borderColor = 'var(--chronos-accent)' }}
-                      onMouseLeave={e => { e.currentTarget.style.color = 'var(--chronos-text-muted)'; e.currentTarget.style.borderColor = 'var(--chronos-border)' }}
-                    >
-                      <UserCog size={12} />Manager
-                    </button>
+                        {/* Assign manager button — admin only */}
+                        <button
+                          onClick={e => { e.stopPropagation(); openManagerModal(dept) }}
+                          title="Change manager"
+                          style={{ background: 'none', border: '1px solid var(--chronos-border)', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px 8px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}
+                          onMouseEnter={e => { e.currentTarget.style.color = 'var(--chronos-accent)'; e.currentTarget.style.borderColor = 'var(--chronos-accent)' }}
+                          onMouseLeave={e => { e.currentTarget.style.color = 'var(--chronos-text-muted)'; e.currentTarget.style.borderColor = 'var(--chronos-border)' }}
+                        >
+                          <UserCog size={12} />Manager
+                        </button>
+                      </>
+                    )}
                   </div>
 
                   {isExpanded ? <ChevronDown size={14} style={{ color: 'var(--chronos-text-muted)', flexShrink: 0 }} /> : <ChevronRight size={14} style={{ color: 'var(--chronos-text-muted)', flexShrink: 0 }} />}
@@ -397,32 +439,38 @@ export default function DepartmentsPage() {
                           <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--chronos-text-muted)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                             Task Types ({deptTaskTypes.filter(t => t.is_active).length} active)
                           </div>
-                          <button
-                            onClick={() => openTaskTypeModal(dept)}
-                            style={{ background: 'none', border: '1px solid var(--chronos-border)', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '3px 8px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}
-                            onMouseEnter={e => { e.currentTarget.style.color = 'var(--chronos-accent)'; e.currentTarget.style.borderColor = 'var(--chronos-accent)' }}
-                            onMouseLeave={e => { e.currentTarget.style.color = 'var(--chronos-text-muted)'; e.currentTarget.style.borderColor = 'var(--chronos-border)' }}
-                          >
-                            <Plus size={11} />Add
-                          </button>
+                          {/* Add task type button — visible to admin always, and to manager for their dept */}
+                          {canEditTasks && (
+                            <button
+                              onClick={() => openTaskTypeModal(dept)}
+                              style={{ background: 'none', border: '1px solid var(--chronos-border)', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '3px 8px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}
+                              onMouseEnter={e => { e.currentTarget.style.color = 'var(--chronos-accent)'; e.currentTarget.style.borderColor = 'var(--chronos-accent)' }}
+                              onMouseLeave={e => { e.currentTarget.style.color = 'var(--chronos-text-muted)'; e.currentTarget.style.borderColor = 'var(--chronos-border)' }}
+                            >
+                              <Plus size={11} />Add
+                            </button>
+                          )}
                         </div>
                         {deptTaskTypes.length === 0 ? (
-                          <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', fontStyle: 'italic' }}>No task types. Add one above.</p>
+                          <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', fontStyle: 'italic' }}>No task types.{canEditTasks ? ' Add one above.' : ''}</p>
                         ) : (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                             {deptTaskTypes.map(tt => (
                               <div key={tt.id} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: tt.is_active ? 'var(--chronos-success)' : 'var(--chronos-text-muted)', flexShrink: 0 }} />
                                 <span style={{ fontSize: '13px', color: tt.is_active ? 'var(--chronos-text)' : 'var(--chronos-text-muted)', flex: 1, textDecoration: tt.is_active ? 'none' : 'line-through' }}>{tt.name}</span>
-                                <button
-                                  onClick={() => toggleTaskType(tt.id, tt.is_active)}
-                                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '2px', fontSize: '11px' }}
-                                  title={tt.is_active ? 'Deactivate' : 'Activate'}
-                                  onMouseEnter={e => e.currentTarget.style.color = tt.is_active ? 'var(--chronos-danger)' : 'var(--chronos-success)'}
-                                  onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
-                                >
-                                  <Pencil size={11} />
-                                </button>
+                                {/* Toggle button — admin always; manager only for their dept */}
+                                {canEditTasks && (
+                                  <button
+                                    onClick={() => toggleTaskType(tt.id, tt.is_active, dept.name)}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '2px', fontSize: '11px' }}
+                                    title={tt.is_active ? 'Deactivate' : 'Activate'}
+                                    onMouseEnter={e => e.currentTarget.style.color = tt.is_active ? 'var(--chronos-danger)' : 'var(--chronos-success)'}
+                                    onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                                  >
+                                    <Pencil size={11} />
+                                  </button>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -437,7 +485,7 @@ export default function DepartmentsPage() {
         </div>
       )}
 
-      {/* ── Create Department Modal ── */}
+      {/* ── Create Department Modal (admin only) ── */}
       <Modal isOpen={createModal} onClose={() => setCreateModal(false)} title="Create Department" size="sm">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <FormField label="Department Code *">
@@ -480,7 +528,7 @@ export default function DepartmentsPage() {
         </div>
       </Modal>
 
-      {/* ── Edit Department Modal ── */}
+      {/* ── Edit Department Modal (admin only) ── */}
       <Modal isOpen={!!editModal} onClose={() => setEditModal(null)} title={`Edit Department — ${editModal?.name}`} size="sm">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <FormField label="Department Code *">
@@ -522,7 +570,7 @@ export default function DepartmentsPage() {
         </div>
       </Modal>
 
-      {/* ── Manager Modal ── */}
+      {/* ── Manager Modal (admin only) ── */}
       <Modal isOpen={!!managerModal} onClose={() => setManagerModal(null)} title={`Set Manager — ${managerModal?.name}`} size="sm">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <p style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>
@@ -547,7 +595,7 @@ export default function DepartmentsPage() {
         </div>
       </Modal>
 
-      {/* ── Task Type Modal ── */}
+      {/* ── Task Type Modal (admin: any; manager: their dept) ── */}
       <Modal isOpen={!!taskTypeModal} onClose={() => setTaskTypeModal(null)} title={`Add Task Type — ${taskTypeModal?.name}`} size="sm">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <FormField label="Task Type Name *">

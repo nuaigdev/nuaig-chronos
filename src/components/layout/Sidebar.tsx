@@ -24,7 +24,7 @@ const NAV_ITEMS = [
   { href: '/dashboard/timesheets', icon: FileText, label: 'Timesheets', roles: ['admin', 'manager', 'employee'] },
   { href: '/dashboard/approvals', icon: FileText, label: 'Approvals', roles: ['admin', 'manager'] },
   { href: '/dashboard/team', icon: Users, label: 'Team', roles: ['admin', 'manager'] },
-  { href: '/dashboard/departments', icon: Layers, label: 'Departments', roles: ['admin'] },
+  { href: '/dashboard/departments', icon: Layers, label: 'Departments', roles: ['admin', 'manager'] },
   { href: '/dashboard/reports', icon: BarChart3, label: 'Reports', roles: ['admin', 'manager'] },
   { href: '/dashboard/settings', icon: Settings, label: 'Settings', roles: ['admin'] },
 ]
@@ -83,8 +83,15 @@ export default function Sidebar() {
     }
     setChangingPassword(true)
     try {
-      const { error } = await supabase.auth.updateUser({ password: passwordForm.newPassword })
-      if (error) throw error
+      // Use the API route instead of supabase.auth.updateUser to avoid
+      // the session invalidation that causes an infinite loading state.
+      const res = await fetch('/api/admin/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_password: passwordForm.newPassword }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) throw new Error(data.error ?? 'Failed to update password')
       toast.success('Password updated successfully!')
       setShowPasswordModal(false)
       setPasswordForm({ newPassword: '', confirmPassword: '' })

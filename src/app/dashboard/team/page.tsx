@@ -221,12 +221,16 @@ export default function TeamPage() {
 
     setSaving(true)
     try {
-      const { data, error } = await supabase.rpc('admin_reset_user_password', {
-        target_user_id: editMember.id,
-        new_password: pwForm.password,
+      const res = await fetch('/api/admin/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_user_id: editMember.id,
+          new_password: pwForm.password,
+        }),
       })
-      if (error) throw error
-      if (data && !data.success) throw new Error(data.error)
+      const data = await res.json()
+      if (!res.ok || !data.success) throw new Error(data.error ?? 'Failed to reset password')
       toast.success(`Password reset for ${editMember.full_name}`)
       setModalMode(null)
     } catch (err: unknown) {
