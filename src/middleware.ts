@@ -7,12 +7,12 @@ const ADMIN_MANAGER_ROUTES = [
   '/dashboard/approvals',
   '/dashboard/reports',
   '/dashboard/team',
+  '/dashboard/departments',
 ]
 
 // Routes that only admin can access
 const ADMIN_ONLY_ROUTES = [
   '/dashboard/settings',
-  '/dashboard/departments',
 ]
 
 function routeIsRestricted(pathname: string, routes: string[]): boolean {
