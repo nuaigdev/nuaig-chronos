@@ -55,14 +55,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [profileReady, setProfileReady] = useState(false)
 
+  // Track in-flight profile fetch to prevent duplicate concurrent fetches
+  const fetchingRef = useRef<string | null>(null)
   const lastFetchedUserId = useRef<string | null>(null)
   const profileReadyRef = useRef(false)
-  useEffect(() => {
-    profileReadyRef.current = profileReady
-  }, [profileReady])
+  useEffect(() => { profileReadyRef.current = profileReady }, [profileReady])
 
+  // ── fetchProfile ──────────────────────────────────────────────────────────
   const fetchProfile = useCallback(async (userId: string): Promise<Profile | null> => {
-    const delays = [0, 100, 300]
+    const delays = [0, 150, 400]
     let lastAuthError: PostgrestError | null = null
 
     for (const delay of delays) {
@@ -87,68 +88,73 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (error) {
-        // eslint-disable-next-line no-console
         console.error('[useAuth] fetchProfile failed (non-auth)', error)
       }
       return null
     }
 
-    // eslint-disable-next-line no-console
     console.error('[useAuth] fetchProfile exhausted retries on auth error', lastAuthError)
     throw new Error('AUTH_TOKEN_FAILED')
   }, [])
 
-  const refreshProfile = useCallback(async () => {
-    const { data: { user: currentUser } } = await supabase.auth.getUser()
-    if (currentUser) {
-      lastFetchedUserId.current = null
-      try {
-        const p = await fetchProfile(currentUser.id)
-        if (p) lastFetchedUserId.current = currentUser.id
-      } catch {
-        // Swallow — refreshProfile is fire-and-forget for callers
-      }
+  // ── loadProfile ───────────────────────────────────────────────────────────
+  // Single guarded entry point. On any failure it still sets profileReady so
+  // the app never stays stuck in an infinite loading state.
+  const loadProfile = useCallback(async (sessionUser: User, isCancelled: () => boolean) => {
+    // Skip if another fetch for this exact user is already in-flight
+    if (fetchingRef.current === sessionUser.id) return
+    fetchingRef.current = sessionUser.id
+
+    try {
+      const p = await fetchProfile(sessionUser.id)
+      if (isCancelled()) return
+      lastFetchedUserId.current = sessionUser.id
+      // Always set profileReady=true even if profile row was null — unblocks UI
+      setProfileReady(true)
+      if (!p) console.warn('[useAuth] profile row not found for user', sessionUser.id)
+    } catch {
+      // AUTH_TOKEN_FAILED after retries — unblock UI; middleware will redirect
+      // on next navigation if the session is truly broken.
+      if (!isCancelled()) setProfileReady(true)
+    } finally {
+      if (fetchingRef.current === sessionUser.id) fetchingRef.current = null
+      if (!isCancelled()) setLoading(false)
     }
   }, [fetchProfile])
 
+  // ── refreshProfile ────────────────────────────────────────────────────────
+  const refreshProfile = useCallback(async () => {
+    const { data: { user: currentUser } } = await supabase.auth.getUser()
+    if (!currentUser) return
+    // Force a fresh fetch
+    lastFetchedUserId.current = null
+    fetchingRef.current = null
+    let done = false
+    await loadProfile(currentUser, () => done)
+    done = true
+  }, [loadProfile])
+
+  // ── Bootstrap + auth state subscription ──────────────────────────────────
   useEffect(() => {
     let cancelled = false
+    const isCancelled = () => cancelled
 
     const init = async () => {
       try {
         const { data: { user: currentUser }, error } = await supabase.auth.getUser()
-
         if (cancelled) return
 
         if (error || !currentUser) {
-          setUser(null)
-          setProfile(null)
-          setCompany(null)
-          setProfileReady(false)
-          setLoading(false)
+          setUser(null); setProfile(null); setCompany(null)
+          setProfileReady(false); setLoading(false)
           return
         }
 
         setUser(currentUser)
-        lastFetchedUserId.current = currentUser.id
-
-        try {
-          await fetchProfile(currentUser.id)
-          if (!cancelled) {
-            setProfileReady(true)
-            setLoading(false)
-          }
-        } catch {
-          if (!cancelled) {
-            setLoading(false)
-          }
-        }
+        await loadProfile(currentUser, isCancelled)
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.error('[useAuth] init failed', e as AuthError)
-        if (!cancelled) {
-          setLoading(false)
-        }
+        if (!cancelled) setLoading(false)
       }
     }
 
@@ -160,37 +166,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         const sessionUser = session?.user ?? null
 
+        // ── Signed out ──
         if (event === 'SIGNED_OUT' || !sessionUser) {
           lastFetchedUserId.current = null
-          setUser(null)
-          setProfile(null)
-          setCompany(null)
-          setProfileReady(false)
-          setLoading(false)
+          fetchingRef.current = null
+          setUser(null); setProfile(null); setCompany(null)
+          setProfileReady(false); setLoading(false)
           return
         }
 
         setUser(sessionUser)
 
         const userChanged = sessionUser.id !== lastFetchedUserId.current
-        const needsHealing = !profileReadyRef.current
-        const shouldRefetch = userChanged || needsHealing || event === 'USER_UPDATED'
+
+        // KEY FIX: TOKEN_REFRESHED must always trigger a re-fetch.
+        // Without this, a tab that wakes after a long idle will have a new
+        // access token but stale (or missing) profile state, leaving the app
+        // stuck because profileReady never flips to true.
+        const shouldRefetch =
+          userChanged ||
+          !profileReadyRef.current ||
+          event === 'TOKEN_REFRESHED' ||
+          event === 'USER_UPDATED' ||
+          event === 'SIGNED_IN'
 
         if (!shouldRefetch) {
           if (!cancelled) setLoading(false)
           return
         }
 
-        lastFetchedUserId.current = sessionUser.id
-        try {
-          await fetchProfile(sessionUser.id)
-          if (!cancelled) {
-            setProfileReady(true)
-            setLoading(false)
-          }
-        } catch {
-          if (!cancelled) setLoading(false)
+        // Allow loadProfile to run fresh:
+        // - user changed: reset both refs
+        // - same user but TOKEN_REFRESHED/healing: only reset fetchingRef so
+        //   loadProfile can issue a new query with the fresh token
+        if (userChanged) {
+          lastFetchedUserId.current = null
+          fetchingRef.current = null
+        } else {
+          fetchingRef.current = null
         }
+
+        await loadProfile(sessionUser, isCancelled)
       }
     )
 
@@ -198,7 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true
       subscription.unsubscribe()
     }
-  }, [fetchProfile])
+  }, [loadProfile])
 
   const role = profile?.role
   const isAdmin = role === 'admin'
