@@ -244,10 +244,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(null); setProfile(null); setCompany(null)
           setProfileReady(false); setLoading(false)
 
-          // Only redirect if we're on a protected page. If user is already
-          // on /login, do nothing — letting them sign in normally.
-          if (!isOnPublicAuthPage()) {
-            await triggerHardReset()
+          // If we're on a protected page, redirect to /login immediately.
+          // We do NOT call signOut() again here — it has already happened
+          // (that's why this event fired). Calling it again races with
+          // the original signOut promise and breaks the redirect.
+          // We also do NOT route through triggerHardReset() because it
+          // calls signOut() internally, which is the same problem.
+          if (typeof window !== 'undefined' && !isOnPublicAuthPage()) {
+            redirectingRef.current = true
+            window.location.href = '/login'
           }
           return
         }
