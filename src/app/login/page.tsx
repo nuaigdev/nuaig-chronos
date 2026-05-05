@@ -2,8 +2,16 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
+
+// ── Module-level singleton ─────────────────────────────────────────────────
+// CRITICAL: createClient() MUST be called at module scope, not inside the
+// component body. createBrowserClient from @supabase/ssr is a singleton —
+// calling it inside the component creates a different instance from the one
+// useAuth holds, causing onAuthStateChange to fire on a client that nobody
+// is listening to. Result: SIGNED_IN never propagates, profileReady never
+// flips to true, dashboard renders an empty shell, user is stuck.
+const supabase = createClient()
 
 // Abstract Chronos logo mark — three offset arcs + solid pill
 // Represents flow, forward motion, and structure — not time-specific
@@ -64,15 +72,14 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const supabase = createClient()
-  const router = useRouter()
+  // ❌ DO NOT add `const supabase = createClient()` here — see module-level note above
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) {
         if (error.message?.toLowerCase().includes('database') || error.status === 500) {
           throw new Error('A server error occurred. Please try again in a moment.')
@@ -82,15 +89,22 @@ export default function LoginPage() {
         }
         throw error
       }
-      if (data?.user) {
-        router.push('/dashboard')
-        router.refresh()
-      }
+
+      // ── Hard navigation, not router.push ──────────────────────────────────
+      // CRITICAL: window.location.href forces a full HTTP request through the
+      // middleware, which validates the session and writes fresh auth cookies
+      // BEFORE the dashboard mounts. router.push is a client-side SPA nav —
+      // the browser never makes a real request, middleware never runs, and
+      // the dashboard can mount before cookies are settled, producing the
+      // "shell loads, no data" stuck state.
+      window.location.href = '/dashboard'
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'An error occurred')
-    } finally {
       setLoading(false)
     }
+    // Note: we don't setLoading(false) on success because window.location.href
+    // is about to unload the page anyway. Keeping the button in its loading
+    // state until navigation completes prevents a confusing flash.
   }
 
   const steps = [

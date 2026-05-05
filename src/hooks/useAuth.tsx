@@ -44,6 +44,57 @@ function isAuthError(err: PostgrestError | null): boolean {
   return msg.includes('jwt') || msg.includes('expired') || msg.includes('invalid token')
 }
 
+/**
+ * Detect a dead/stale Supabase session from a getUser() error.
+ *
+ * When this returns true, the refresh token itself is invalid or the session
+ * has been revoked server-side — there is no recovery path other than signing
+ * out and forcing the user back to /login. Quietly clearing React state (the
+ * old behaviour) leaves the user on a frozen dashboard with no way out except
+ * a manual hard refresh or cookie clear.
+ */
+function isSessionGoneError(err: AuthError | null | undefined): boolean {
+  if (!err) return false
+  const msg = (err.message || '').toLowerCase()
+  // 403 status from /auth/v1/user — the canonical session_not_found signal
+  if ((err as { status?: number }).status === 403) return true
+  // Common server-side messages for invalid/missing session or refresh token
+  return (
+    msg.includes('session_not_found') ||
+    msg.includes('session not found') ||
+    msg.includes("session id") && msg.includes("doesn't exist") ||
+    msg.includes('auth session missing') ||
+    msg.includes('refresh token not found') ||
+    msg.includes('invalid refresh token') ||
+    msg.includes('token_revoked') ||
+    msg.includes('token revoked') ||
+    msg.includes('jwt expired') && msg.includes('refresh')
+  )
+}
+
+/**
+ * Hard reset: clear all client auth state and force a full navigation to
+ * /login. This is the ONLY recovery path when the session is irrecoverable.
+ *
+ * - signOut() clears localStorage and cookies on the Supabase client side
+ * - window.location.href forces a full HTTP request through the middleware,
+ *   which will see the cleared cookies and serve /login cleanly
+ *
+ * Using router.push here would NOT work — it's a client-side nav, middleware
+ * doesn't run, and the broken auth state would persist into the next render.
+ */
+async function hardResetToLogin(): Promise<void> {
+  try {
+    await supabase.auth.signOut()
+  } catch {
+    // signOut can throw if there's no session to sign out from — that's fine,
+    // we still want to redirect.
+  }
+  if (typeof window !== 'undefined') {
+    window.location.href = '/login'
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -60,6 +111,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const lastFetchedUserId = useRef<string | null>(null)
   const profileReadyRef = useRef(false)
   useEffect(() => { profileReadyRef.current = profileReady }, [profileReady])
+
+  // Guard against firing multiple simultaneous redirects to /login
+  const redirectingRef = useRef(false)
+  const triggerHardReset = useCallback(async () => {
+    if (redirectingRef.current) return
+    redirectingRef.current = true
+    await hardResetToLogin()
+  }, [])
 
   // ── fetchProfile ──────────────────────────────────────────────────────────
   const fetchProfile = useCallback(async (userId: string): Promise<Profile | null> => {
@@ -113,14 +172,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfileReady(true)
       if (!p) console.warn('[useAuth] profile row not found for user', sessionUser.id)
     } catch {
-      // AUTH_TOKEN_FAILED after retries — unblock UI; middleware will redirect
-      // on next navigation if the session is truly broken.
-      if (!isCancelled()) setProfileReady(true)
+      // AUTH_TOKEN_FAILED after retries — the session is dead. Force the user
+      // back to /login instead of leaving them on a frozen dashboard.
+      if (!isCancelled()) {
+        await triggerHardReset()
+      }
     } finally {
       if (fetchingRef.current === sessionUser.id) fetchingRef.current = null
       if (!isCancelled()) setLoading(false)
     }
-  }, [fetchProfile])
+  }, [fetchProfile, triggerHardReset])
 
   // ── refreshProfile ────────────────────────────────────────────────────────
   const refreshProfile = useCallback(async () => {
@@ -144,7 +205,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data: { user: currentUser }, error } = await supabase.auth.getUser()
         if (cancelled) return
 
+        // ── Stale/dead session detection ───────────────────────────────────
+        // If getUser() returns an error that indicates the session is gone
+        // (session_not_found, 403, refresh token invalid), we MUST force the
+        // user back to /login. Anything else leaves them stuck on a frozen
+        // page with no data and no way to recover except a manual hard
+        // refresh — which is exactly the bug we are eliminating.
+        if (error && isSessionGoneError(error)) {
+          await triggerHardReset()
+          return
+        }
+
         if (error || !currentUser) {
+          // No session at all (not logged in) OR an unrecognised auth error.
+          // Public pages like /login don't need state; protected pages will
+          // be caught by middleware on the next navigation.
           setUser(null); setProfile(null); setCompany(null)
           setProfileReady(false); setLoading(false)
           return
@@ -166,12 +241,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         const sessionUser = session?.user ?? null
 
-        // ── Signed out ──
+        // ── Signed out OR refresh failed silently ─────────────────────────
+        // Two cases land here:
+        //   1. Explicit SIGNED_OUT (user clicked sign out, or signOut() was
+        //      called from anywhere in the app).
+        //   2. TOKEN_REFRESHED fired but session is null — meaning the
+        //      refresh token itself is no longer valid. The Supabase client
+        //      cannot recover from this; only a fresh login can.
+        // Either way, we hard-reset to /login. This is the linchpin fix
+        // that makes the stale-session symptom impossible.
         if (event === 'SIGNED_OUT' || !sessionUser) {
           lastFetchedUserId.current = null
           fetchingRef.current = null
           setUser(null); setProfile(null); setCompany(null)
           setProfileReady(false); setLoading(false)
+
+          // Don't redirect if we're already on /login — would cause a loop
+          // and a flash of the page reloading itself.
+          if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+            await triggerHardReset()
+          }
           return
         }
 
@@ -210,11 +299,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     )
 
+    // ── Window focus / online event safety net ──────────────────────────────
+    // When a tab is hidden for hours and the user returns, the visibilitychange
+    // event fires before any user interaction. We proactively re-validate the
+    // session — if it died while the tab was asleep, isSessionGoneError will
+    // catch it and redirect to /login cleanly, instead of waiting for the next
+    // data fetch to fail mysteriously.
+    const onWake = async () => {
+      if (cancelled) return
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      try {
+        const { error } = await supabase.auth.getUser()
+        if (error && isSessionGoneError(error)) {
+          await triggerHardReset()
+        }
+      } catch (e) {
+        console.warn('[useAuth] wake-check failed', e)
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      document.addEventListener('visibilitychange', onWake)
+      window.addEventListener('online', onWake)
+    }
+
     return () => {
       cancelled = true
       subscription.unsubscribe()
+      if (typeof window !== 'undefined') {
+        document.removeEventListener('visibilitychange', onWake)
+        window.removeEventListener('online', onWake)
+      }
     }
-  }, [loadProfile])
+  }, [loadProfile, triggerHardReset])
 
   const role = profile?.role
   const isAdmin = role === 'admin'
