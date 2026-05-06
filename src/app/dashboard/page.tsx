@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { StatCard, StatusBadge, ProgressBar, SectionHeader } from '@/components/ui'
 import { formatHours, formatDate, getWeekRange, calculateCompletionPercentage } from '@/utils'
+import { handleAuthError } from '@/utils/auth-error'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Clock, FolderKanban, CheckSquare, Calendar, AlertCircle } from 'lucide-react'
 import Link from 'next/link'
@@ -42,12 +43,16 @@ export default function DashboardPage() {
       const today = formatDate(new Date(), 'yyyy-MM-dd')
 
       // Hours this week
-      const { data: weekLogs } = await supabase
+      const { data: weekLogs, error: weekLogsError } = await supabase
         .from('time_logs')
         .select('hours, log_date')
         .eq('user_id', profile.id)
         .gte('log_date', formatDate(weekStart, 'yyyy-MM-dd'))
         .lte('log_date', formatDate(weekEnd, 'yyyy-MM-dd'))
+
+      // If the first query fails with a JWT/auth error, the session is dead.
+      // Show toast + redirect to /login. Skip the rest of the work.
+      if (handleAuthError(weekLogsError)) return
 
       // Hours today
       const todayLogs = weekLogs?.filter(l => l.log_date === today) || []

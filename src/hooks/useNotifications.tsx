@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, useCallback, ReactNode 
 import { createClient } from '@/lib/supabase/client'
 import { AppNotification } from '@/types'
 import { useAuth } from './useAuth'
+import { handleAuthError } from '@/utils/auth-error'
 
 // Single stable client instance
 const supabase = createClient()
@@ -31,12 +32,14 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
   const fetchNotifications = useCallback(async () => {
     if (!user) return
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('notifications')
       .select('*')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(50)
+
+    if (handleAuthError(error)) return
 
     if (data) {
       const typed = data as unknown as AppNotification[]

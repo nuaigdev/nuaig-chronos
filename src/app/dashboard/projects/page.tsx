@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { Project, Profile } from '@/types'
 import { StatusBadge, EmptyState, Modal, FormField, Select, ProgressBar } from '@/components/ui'
 import { formatDate, formatHours, getInitials } from '@/utils'
+import { handleAuthError } from '@/utils/auth-error'
 import { FolderKanban, Plus, Search, Archive, Edit2, Clock, Users, UserPlus, X, Trash2 } from 'lucide-react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
@@ -61,6 +62,7 @@ export default function ProjectsPage() {
     }
 
     const { data, error } = await query
+    if (handleAuthError(error)) { setLoading(false); return }
     if (error) { toast.error('Failed to load projects'); setLoading(false); return }
 
     const projectData = (data || []) as unknown as Array<Project & { project_members: { user_id: string }[] }>

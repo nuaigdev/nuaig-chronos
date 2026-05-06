@@ -14,6 +14,7 @@ import {
 } from 'date-fns'
 import { Download, ChevronLeft, ChevronRight, ChevronRight as ChevronRightIcon } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { handleAuthError } from '@/utils/auth-error'
 
 const supabase = createClient()
 const ACCENT = '#a78bfa'
@@ -156,7 +157,8 @@ export default function ReportsPage() {
       // Fetch profiles for filter dropdowns
       let profQ = supabase.from('profiles').select('id,full_name,department,manager_id').eq('is_active', true)
       if (allowedUserIds !== null) profQ = profQ.in('id', allowedUserIds)
-      const { data: profData } = await profQ
+      const { data: profData, error: profError } = await profQ
+      if (handleAuthError(profError)) { setLoading(false); return }
       const profArr = (profData || []) as ProfileDetail[]
       setAllProfiles(profArr)
 

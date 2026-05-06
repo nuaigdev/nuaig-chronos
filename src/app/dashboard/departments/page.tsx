@@ -9,6 +9,7 @@ import { getInitials } from '@/utils'
 import { Building2, Users, ChevronDown, ChevronRight, UserCog, Plus, Tag, Pencil, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useRouter } from 'next/navigation'
+import { handleAuthError } from '@/utils/auth-error'
 
 const supabase = createClient()
 
@@ -56,7 +57,7 @@ export default function DepartmentsPage() {
 
   const fetchData = useCallback(async () => {
     setLoading(true)
-    const [{ data: depts }, { data: profs }, { data: tt }] = await Promise.all([
+    const [deptsRes, profsRes, ttRes] = await Promise.all([
       supabase
         .from('departments')
         .select('*, manager:profiles!departments_manager_id_fkey(id, full_name, email, role, department, is_active, created_at, updated_at)')
@@ -64,9 +65,12 @@ export default function DepartmentsPage() {
       supabase.from('profiles').select('*').eq('is_active', true).order('full_name'),
       supabase.from('task_types').select('*').order('department').order('sort_order'),
     ])
-    setDepartments((depts || []) as unknown as DeptRow[])
-    setMembers((profs || []) as unknown as Profile[])
-    setTaskTypes((tt || []) as unknown as TaskType[])
+    if (handleAuthError(deptsRes.error) || handleAuthError(profsRes.error) || handleAuthError(ttRes.error)) {
+      setLoading(false); return
+    }
+    setDepartments((deptsRes.data || []) as unknown as DeptRow[])
+    setMembers((profsRes.data || []) as unknown as Profile[])
+    setTaskTypes((ttRes.data || []) as unknown as TaskType[])
     setLoading(false)
   }, [])
 

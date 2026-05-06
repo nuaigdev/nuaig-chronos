@@ -8,6 +8,7 @@ import { EmptyState, Modal, FormField, Select } from '@/components/ui'
 import { getRoleColor, getInitials } from '@/utils'
 import { Users, Search, Edit2, UserCheck, UserX, UserPlus, KeyRound } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { handleAuthError } from '@/utils/auth-error'
 
 const supabase = createClient()
 
@@ -40,6 +41,7 @@ export default function TeamPage() {
     const [deptsRes] = await Promise.all([
       supabase.from('departments').select('*').order('name'),
     ])
+    if (handleAuthError(deptsRes.error)) { setLoading(false); return }
     setDepartments((deptsRes.data || []) as unknown as DeptRow[])
 
     if (isAdmin) {

@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { Timesheet, TimeLog, Project, TaskType, Department } from '@/types'
 import { StatusBadge, EmptyState, Modal, FormField, Select } from '@/components/ui'
 import { formatDate, formatHours, getWeekRange, getWeekDays } from '@/utils'
+import { handleAuthError } from '@/utils/auth-error'
 import {
   FileText, ChevronLeft, ChevronRight, Send, BellRing,
   Plus, Trash2, Edit2, Check, X, Clock
@@ -103,13 +104,14 @@ export default function TimesheetsPage() {
   const fetchTimeLogs = useCallback(async () => {
     if (!profile) return
     setLoading(true)
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('time_logs')
       .select('*, project:projects(id,name), task_type:task_types(id,department,name)')
       .eq('user_id', profile.id)
       .gte('log_date', weekStartStr)
       .lte('log_date', weekEndStr)
       .order('log_date', { ascending: true })
+    if (handleAuthError(error)) { setLoading(false); return }
     setTimeLogs((data || []) as unknown as TimeLogFull[])
     setLoading(false)
   }, [profile, weekStartStr, weekEndStr])

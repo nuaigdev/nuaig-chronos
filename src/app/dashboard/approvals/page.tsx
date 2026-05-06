@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { Timesheet, Profile, TimeLog, DeptRow } from '@/types'
 import { StatusBadge, EmptyState, Modal, FormField } from '@/components/ui'
 import { formatDate, formatHours, getInitials, getWeekRange } from '@/utils'
+import { handleAuthError } from '@/utils/auth-error'
 import { CheckSquare, Check, X, ChevronRight, Clock, AlertCircle, BellRing, LayoutGrid, ChevronDown, Building2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, addDays, startOfWeek, subWeeks } from 'date-fns'
@@ -119,7 +120,8 @@ export default function ApprovalsPage() {
     if (statusFilter !== 'all') query = query.eq('status', statusFilter)
     if (!isAdmin) query = query.in('user_id', reporteeIds)
 
-    const { data } = await query
+    const { data, error } = await query
+    if (handleAuthError(error)) { setLoading(false); return }
     setTimesheets((data || []) as unknown as TimesheetWithUser[])
     setLoading(false)
   }, [profile, canManageProjects, isAdmin, statusFilter, fetchReporteeIds])

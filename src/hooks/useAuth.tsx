@@ -86,15 +86,21 @@ function isOnPublicAuthPage(): boolean {
   return path.startsWith('/login') || path.startsWith('/auth')
 }
 
-async function hardResetToLogin(): Promise<void> {
+function hardResetToLogin(): void {
   // Don't redirect if we're already on a public auth page — that's the loop.
   if (isOnPublicAuthPage()) return
 
-  try {
-    await supabase.auth.signOut()
-  } catch {
-    // signOut can throw if there's no session to sign out from — that's fine.
-  }
+  // ── Fire-and-forget signOut, then redirect IMMEDIATELY ────────────────────
+  // Previously this awaited signOut() before redirecting, which meant a hung
+  // signOut (free Supabase 5xx, network blip) deadlocked the page on a spinner.
+  // Now: kick off signOut in the background; redirect right away. The
+  // middleware's redirectToLoginAndClearAuth() strips the auth cookies on the
+  // /login request anyway, so cookie cleanup is guaranteed regardless of
+  // whether the background signOut() succeeded.
+  // Fire-and-forget signOut. Attach a noop catch so a rejection doesn't
+  // bubble up as an unhandled promise rejection (which would log noise but
+  // not block anything). The redirect below proceeds regardless.
+  supabase.auth.signOut().catch(() => { /* ignored on purpose */ })
   if (typeof window !== 'undefined') {
     window.location.href = '/login'
   }
@@ -119,26 +125,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Guard against firing multiple simultaneous redirects to /login
   const redirectingRef = useRef(false)
-  const triggerHardReset = useCallback(async () => {
+  const triggerHardReset = useCallback(() => {
     if (redirectingRef.current) return
     if (isOnPublicAuthPage()) return  // Never redirect while on /login
     redirectingRef.current = true
-    await hardResetToLogin()
+    hardResetToLogin()
   }, [])
 
   // ── fetchProfile ──────────────────────────────────────────────────────────
+  // Each attempt is bounded by a 1.5s timeout. If the query hangs (free
+  // Supabase blip, network stall), we treat it as an auth-style failure
+  // and retry rather than waiting indefinitely. The whole bootstrap is
+  // additionally bounded by the watchdog above so the spinner never sticks.
   const fetchProfile = useCallback(async (userId: string): Promise<Profile | null> => {
     const delays = [0, 150, 400]
+    const PER_ATTEMPT_MS = 1500
     let lastAuthError: PostgrestError | null = null
+
+    const TIMEOUT_SENTINEL = Symbol('timeout')
 
     for (const delay of delays) {
       if (delay > 0) await sleep(delay)
 
-      const { data, error } = await supabase
+      const queryPromise = supabase
         .from('profiles')
         .select('*, company:companies(*)')
         .eq('id', userId)
         .single()
+
+      const timeoutPromise = new Promise<typeof TIMEOUT_SENTINEL>(resolve =>
+        setTimeout(() => resolve(TIMEOUT_SENTINEL), PER_ATTEMPT_MS)
+      )
+
+      const result = await Promise.race([queryPromise, timeoutPromise])
+
+      if (result === TIMEOUT_SENTINEL) {
+        console.warn('[useAuth] fetchProfile attempt timed out, retrying')
+        continue
+      }
+
+      const { data, error } = result as { data: unknown; error: PostgrestError | null }
 
       if (!error && data) {
         const p = data as unknown as Profile & { company: Company }
@@ -158,7 +184,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return null
     }
 
-    console.error('[useAuth] fetchProfile exhausted retries on auth error', lastAuthError)
+    console.error('[useAuth] fetchProfile exhausted retries on auth/timeout', lastAuthError)
     throw new Error('AUTH_TOKEN_FAILED')
   }, [])
 
@@ -176,7 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // AUTH_TOKEN_FAILED after retries — session is dead. Force redirect.
       if (!isCancelled()) {
-        await triggerHardReset()
+        triggerHardReset()
       }
     } finally {
       if (fetchingRef.current === sessionUser.id) fetchingRef.current = null
@@ -200,6 +226,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     const isCancelled = () => cancelled
 
+    // ── Watchdog: guarantee no infinite spinner ───────────────────────────
+    // If anything in the auth bootstrap (getUser, profile fetch, network)
+    // takes longer than this, give up. Two cases:
+    //   1. User on /login: just clear loading. Login form is visible already.
+    //   2. User on a protected page: profile never loaded → page would spin
+    //      forever waiting on profileReady → hard-redirect to /login so they
+    //      can sign in fresh. This is the user-visible "stuck app" fix.
+    // Free Supabase under bursty load is the main reason this trips.
+    // 3s is comfortably above p99 healthy latency.
+    const WATCHDOG_MS = 3000
+    const watchdog = setTimeout(() => {
+      if (cancelled) return
+      console.warn('[useAuth] bootstrap watchdog fired after', WATCHDOG_MS, 'ms')
+      setLoading(false)
+      // On a protected page with no profile resolved yet, the page is stuck
+      // on its own spinner (it's gated on profileReady). Redirect to /login.
+      if (!profileReadyRef.current && !isOnPublicAuthPage()) {
+        triggerHardReset()
+      }
+    }, WATCHDOG_MS)
+
     const init = async () => {
       try {
         const { data: { user: currentUser }, error } = await supabase.auth.getUser()
@@ -209,7 +256,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // The isSessionGoneError() helper deliberately does NOT match
         // "Auth session missing" so a fresh /login visit doesn't loop.
         if (error && isSessionGoneError(error)) {
-          await triggerHardReset()
+          triggerHardReset()
           return
         }
 
@@ -289,6 +336,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // comes back online. We re-check the session — but ONLY if the user is
     // on a protected route. Otherwise the visibility event on /login would
     // re-trigger and loop.
+    //
+    // The wake check has its own short timeout: if getUser() doesn't return
+    // within 2s, we treat it as a session problem and redirect. Free Supabase
+    // can stall here, and we'd rather send the user to /login than leave
+    // them looking at a stale page that will fail every subsequent query.
     const onWake = async () => {
       if (cancelled) return
       if (typeof document === 'undefined') return
@@ -296,10 +348,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Skip on public auth pages — nothing to validate.
       if (isOnPublicAuthPage()) return
 
+      const TIMEOUT_SENTINEL = Symbol('wake-timeout')
+
       try {
-        const { error } = await supabase.auth.getUser()
+        const wakeTimeout = new Promise<typeof TIMEOUT_SENTINEL>(resolve =>
+          setTimeout(() => resolve(TIMEOUT_SENTINEL), 2000)
+        )
+        const result = await Promise.race([supabase.auth.getUser(), wakeTimeout])
+
+        if (result === TIMEOUT_SENTINEL) {
+          console.warn('[useAuth] wake-check timed out → redirecting to /login')
+          triggerHardReset()
+          return
+        }
+
+        const { error } = result as { error: AuthError | null }
         if (error && isSessionGoneError(error)) {
-          await triggerHardReset()
+          triggerHardReset()
         }
       } catch (e) {
         console.warn('[useAuth] wake-check failed', e)
@@ -313,6 +378,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true
+      clearTimeout(watchdog)
       subscription.unsubscribe()
       if (typeof window !== 'undefined') {
         document.removeEventListener('visibilitychange', onWake)

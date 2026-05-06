@@ -10,6 +10,7 @@ import { StatusBadge, ProgressBar, EmptyState } from '@/components/ui'
 import { formatDate, formatHours, getInitials } from '@/utils'
 import { ArrowLeft, Clock, Users, CheckSquare, Calendar } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { handleAuthError } from '@/utils/auth-error'
 
 const supabase = createClient()
 
@@ -41,11 +42,12 @@ export default function ProjectDetailPage() {
   }
 
   const fetchProject = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('projects')
       .select('*, client:clients(id, name)')
       .eq('id', id)
       .single()
+    if (handleAuthError(error)) return
     setProject(data as unknown as Project)
   }
 

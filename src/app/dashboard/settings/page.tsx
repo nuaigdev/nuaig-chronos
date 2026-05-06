@@ -8,6 +8,7 @@ import { FormField, Modal, EmptyState } from '@/components/ui'
 import { Settings, Plus, Trash2, Calendar, Clock } from 'lucide-react'
 import { formatDate } from '@/utils'
 import toast from 'react-hot-toast'
+import { handleAuthError } from '@/utils/auth-error'
 
 const supabase = createClient()
 
@@ -34,7 +35,8 @@ export default function SettingsPage() {
 
   const fetchHolidays = async () => {
     // RLS automatically scopes to the user's company via company_id
-    const { data } = await supabase.from('holidays').select('*').order('date')
+    const { data, error } = await supabase.from('holidays').select('*').order('date')
+    if (handleAuthError(error)) return
     setHolidays((data || []) as unknown as Holiday[])
   }
 
