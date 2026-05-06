@@ -2,19 +2,18 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useAuth } from '@/hooks/useAuth'
+import { useProfile } from '@/hooks/useProfile'
 import { Profile, DeptRow, TaskType } from '@/types'
 import { EmptyState, Modal, FormField, Select } from '@/components/ui'
 import { getInitials } from '@/utils'
 import { Building2, Users, ChevronDown, ChevronRight, UserCog, Plus, Tag, Pencil, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useRouter } from 'next/navigation'
-import { handleAuthError } from '@/utils/auth-error'
 
 const supabase = createClient()
 
 export default function DepartmentsPage() {
-  const { isAdmin, isManager, profileReady, profile } = useAuth()
+  const { isAdmin, isManager, loading: authLoading, profile } = useProfile()
   const router = useRouter()
 
   const [departments, setDepartments] = useState<DeptRow[]>([])
@@ -52,8 +51,8 @@ export default function DepartmentsPage() {
 
   // Redirect users who are neither admin nor manager
   useEffect(() => {
-    if (profileReady && !isAdmin && !isManager) router.replace('/dashboard')
-  }, [profileReady, isAdmin, isManager, router])
+    if (!authLoading && !isAdmin && !isManager) router.replace('/dashboard')
+  }, [authLoading, isAdmin, isManager, router])
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -65,7 +64,7 @@ export default function DepartmentsPage() {
       supabase.from('profiles').select('*').eq('is_active', true).order('full_name'),
       supabase.from('task_types').select('*').order('department').order('sort_order'),
     ])
-    if (handleAuthError(deptsRes.error) || handleAuthError(profsRes.error) || handleAuthError(ttRes.error)) {
+    if (deptsRes.error || profsRes.error || ttRes.error) {
       setLoading(false); return
     }
     setDepartments((deptsRes.data || []) as unknown as DeptRow[])
@@ -75,9 +74,9 @@ export default function DepartmentsPage() {
   }, [])
 
   useEffect(() => {
-    if (!profileReady || (!isAdmin && !isManager)) return
+    if (authLoading || (!isAdmin && !isManager)) return
     fetchData()
-  }, [profileReady, isAdmin, isManager, fetchData])
+  }, [authLoading, isAdmin, isManager, fetchData])
 
   // ── Determine what this manager can edit ─────────────────────────────────
   // A manager can only edit/delete task types for departments where they are

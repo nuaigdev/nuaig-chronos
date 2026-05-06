@@ -2,11 +2,10 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useAuth } from '@/hooks/useAuth'
+import { useProfile } from '@/hooks/useProfile'
 import { Timesheet, TimeLog, Project, TaskType, Department } from '@/types'
 import { StatusBadge, EmptyState, Modal, FormField, Select } from '@/components/ui'
 import { formatDate, formatHours, getWeekRange, getWeekDays } from '@/utils'
-import { handleAuthError } from '@/utils/auth-error'
 import {
   FileText, ChevronLeft, ChevronRight, Send, BellRing,
   Plus, Trash2, Edit2, Check, X, Clock
@@ -56,7 +55,7 @@ const EMPTY_FORM: LogForm = {
 // ─── component ───────────────────────────────────────────────────────────────
 
 export default function TimesheetsPage() {
-  const { profile, profileReady, canManageProjects } = useAuth()
+  const { profile, loading: authLoading, canManageProjects } = useProfile()
 
   // Week navigation — default to current week
   const [currentWeek, setCurrentWeek] = useState(new Date())
@@ -111,7 +110,7 @@ export default function TimesheetsPage() {
       .gte('log_date', weekStartStr)
       .lte('log_date', weekEndStr)
       .order('log_date', { ascending: true })
-    if (handleAuthError(error)) { setLoading(false); return }
+    if (error) { setLoading(false); return }
     setTimeLogs((data || []) as unknown as TimeLogFull[])
     setLoading(false)
   }, [profile, weekStartStr, weekEndStr])
@@ -139,16 +138,16 @@ export default function TimesheetsPage() {
   }, [profile?.department])
 
   useEffect(() => {
-    if (!profileReady) return
+    if (authLoading || !profile) return
     fetchTimesheet()
     fetchTimeLogs()
-  }, [profileReady, fetchTimesheet, fetchTimeLogs])
+  }, [authLoading, profile?.id, fetchTimesheet, fetchTimeLogs])
 
   useEffect(() => {
-    if (!profileReady) return
+    if (authLoading || !profile) return
     fetchProjects()
     fetchTaskTypes()
-  }, [profileReady, fetchProjects, fetchTaskTypes])
+  }, [authLoading, profile?.id, fetchProjects, fetchTaskTypes])
 
   // ── ensure timesheet row exists for current week when needed ───────────────
 

@@ -2,13 +2,12 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useAuth } from '@/hooks/useAuth'
+import { useProfile } from '@/hooks/useProfile'
 import { Profile, DeptRow, DEPARTMENT_LABELS } from '@/types'
 import { EmptyState, Modal, FormField, Select } from '@/components/ui'
 import { getRoleColor, getInitials } from '@/utils'
 import { Users, Search, Edit2, UserCheck, UserX, UserPlus, KeyRound } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { handleAuthError } from '@/utils/auth-error'
 
 const supabase = createClient()
 
@@ -21,7 +20,7 @@ const ROLE_OPTIONS = [
 type ModalMode = 'edit' | 'add' | 'password'
 
 export default function TeamPage() {
-  const { profile, isAdmin, isManager } = useAuth()
+  const { profile, isAdmin, isManager } = useProfile()
   const [members, setMembers] = useState<Profile[]>([])
   const [departments, setDepartments] = useState<DeptRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -41,7 +40,7 @@ export default function TeamPage() {
     const [deptsRes] = await Promise.all([
       supabase.from('departments').select('*').order('name'),
     ])
-    if (handleAuthError(deptsRes.error)) { setLoading(false); return }
+    if (deptsRes.error) { setLoading(false); return }
     setDepartments((deptsRes.data || []) as unknown as DeptRow[])
 
     if (isAdmin) {

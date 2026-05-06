@@ -2,10 +2,9 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useAuth } from '@/hooks/useAuth'
+import { useProfile } from '@/hooks/useProfile'
 import { StatCard, StatusBadge, ProgressBar, SectionHeader } from '@/components/ui'
 import { formatHours, formatDate, getWeekRange, calculateCompletionPercentage } from '@/utils'
-import { handleAuthError } from '@/utils/auth-error'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Clock, FolderKanban, CheckSquare, Calendar, AlertCircle } from 'lucide-react'
 import Link from 'next/link'
@@ -24,17 +23,11 @@ interface DashboardStats {
 }
 
 export default function DashboardPage() {
-  // Use profileReady — the authoritative signal that BOTH session and profile
-  // row are available. Never gate fetches on profile?.id alone because that
-  // can be non-null while the role fields are still resolving, which causes
-  // incorrect canManageProjects=false on the first render for admins/managers.
-  const { profile, profileReady, canManageProjects } = useAuth()
+  const { profile, loading: authLoading, canManageProjects } = useProfile()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [loading, setLoading] = useState(true)
 
   const fetchStats = useCallback(async () => {
-    // profileReady guarantees profile is non-null here — this guard is a
-    // runtime safety net only, it should never fire in practice.
     if (!profile) return
     setLoading(true)
 
@@ -43,16 +36,12 @@ export default function DashboardPage() {
       const today = formatDate(new Date(), 'yyyy-MM-dd')
 
       // Hours this week
-      const { data: weekLogs, error: weekLogsError } = await supabase
+      const { data: weekLogs } = await supabase
         .from('time_logs')
         .select('hours, log_date')
         .eq('user_id', profile.id)
         .gte('log_date', formatDate(weekStart, 'yyyy-MM-dd'))
         .lte('log_date', formatDate(weekEnd, 'yyyy-MM-dd'))
-
-      // If the first query fails with a JWT/auth error, the session is dead.
-      // Show toast + redirect to /login. Skip the rest of the work.
-      if (handleAuthError(weekLogsError)) return
 
       // Hours today
       const todayLogs = weekLogs?.filter(l => l.log_date === today) || []
@@ -137,14 +126,10 @@ export default function DashboardPage() {
     }
   }, [profile, canManageProjects])
 
-  // Gate on profileReady — this fires only once the profile row (including the
-  // role) has been fetched. Previously this used [profile?.id] which could fire
-  // while profile was still null (race condition) causing an early return and
-  // the loading spinner never clearing for admins and managers.
   useEffect(() => {
-    if (!profileReady) return
+    if (authLoading || !profile) return
     fetchStats()
-  }, [profileReady, fetchStats])
+  }, [authLoading, profile?.id, fetchStats])
 
   const greeting = () => {
     const h = new Date().getHours()

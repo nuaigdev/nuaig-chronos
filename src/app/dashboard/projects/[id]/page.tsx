@@ -4,13 +4,12 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { useAuth } from '@/hooks/useAuth'
+import { useProfile } from '@/hooks/useProfile'
 import { Project, Task, TimeLog, Profile } from '@/types'
 import { StatusBadge, ProgressBar, EmptyState } from '@/components/ui'
 import { formatDate, formatHours, getInitials } from '@/utils'
 import { ArrowLeft, Clock, Users, CheckSquare, Calendar } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { handleAuthError } from '@/utils/auth-error'
 
 const supabase = createClient()
 
@@ -18,7 +17,7 @@ type EnrichedLog = TimeLog & { userName: string }
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const { profile, profileReady, canManageProjects } = useAuth()
+  const { profile, loading: authLoading, canManageProjects } = useProfile()
 
   const [project, setProject] = useState<Project | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
@@ -28,12 +27,10 @@ export default function ProjectDetailPage() {
   const [loggedHours, setLoggedHours] = useState(0)
   const [loading, setLoading] = useState(true)
 
-  // Gate on profileReady so canManageProjects is accurate before fetching
-  // project details and member permissions.
   useEffect(() => {
-    if (!id || !profileReady || !profile) return
+    if (!id || authLoading || !profile) return
     loadAll()
-  }, [id, profileReady, profile?.id])
+  }, [id, authLoading, profile?.id])
 
   const loadAll = async () => {
     setLoading(true)
@@ -47,7 +44,7 @@ export default function ProjectDetailPage() {
       .select('*, client:clients(id, name)')
       .eq('id', id)
       .single()
-    if (handleAuthError(error)) return
+    if (error) return
     setProject(data as unknown as Project)
   }
 

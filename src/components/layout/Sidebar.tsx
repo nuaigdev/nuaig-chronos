@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useAuth } from '@/hooks/useAuth'
+import { useProfile } from '@/hooks/useProfile'
 import { useNotifications } from '@/hooks/useNotifications'
 import { createClient } from '@/lib/supabase/client'
 import { getInitials } from '@/utils'
@@ -58,7 +58,7 @@ function ChronosLogo({ size = 18 }: { size?: number }) {
 export default function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
-  const { profile, isAdmin, isManager } = useAuth()
+  const { profile, isAdmin, isManager } = useProfile()
   const { unreadCount } = useNotifications()
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [passwordForm, setPasswordForm] = useState({ newPassword: '', confirmPassword: '' })

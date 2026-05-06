@@ -3,8 +3,6 @@
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { AppNotification } from '@/types'
-import { useAuth } from './useAuth'
-import { handleAuthError } from '@/utils/auth-error'
 
 // Single stable client instance
 const supabase = createClient()
@@ -28,25 +26,30 @@ const NotificationsContext = createContext<NotificationsContextType>({
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
-  const { user } = useAuth()
+  const [userId, setUserId] = useState<string | null>(null)
+
+  // Grab user ID once on mount — no dependency on useAuth/useProfile
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) setUserId(user.id)
+    })
+  }, [])
 
   const fetchNotifications = useCallback(async () => {
-    if (!user) return
-    const { data, error } = await supabase
+    if (!userId) return
+    const { data } = await supabase
       .from('notifications')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(50)
-
-    if (handleAuthError(error)) return
 
     if (data) {
       const typed = data as unknown as AppNotification[]
       setNotifications(typed)
       setUnreadCount(typed.filter((n) => !n.is_read).length)
     }
-  }, [user?.id])
+  }, [userId])
 
   const markAsRead = async (id: string) => {
     await supabase
@@ -60,22 +63,22 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }
 
   const markAllAsRead = async () => {
-    if (!user) return
+    if (!userId) return
     await supabase
       .from('notifications')
       .update({ is_read: true })
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .eq('is_read', false)
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
     setUnreadCount(0)
   }
 
   useEffect(() => {
-    if (!user) return
+    if (!userId) return
 
     fetchNotifications()
 
-    const channelName = `notifications:${user.id}`
+    const channelName = `notifications:${userId}`
 
     // Remove any stale channel — handles React StrictMode double-invoke
     supabase.getChannels().forEach((ch) => {
@@ -88,7 +91,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       .channel(channelName)
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
         () => fetchNotifications()
       )
       .subscribe()
@@ -96,11 +99,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     return () => {
       supabase.removeChannel(channel)
     }
-  // fetchNotifications is intentionally omitted: it is stable for the lifetime of a user session
-  // (useCallback deps = [user?.id]). Using [user?.id] instead of [user] prevents channel
-  // teardown/rebuild on every navigation when middleware re-fires onAuthStateChange with same user.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id])
+  }, [userId])
 
   return (
     <NotificationsContext.Provider value={{ notifications, unreadCount, markAsRead, markAllAsRead, refresh: fetchNotifications }}>

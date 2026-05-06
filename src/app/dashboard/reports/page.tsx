@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useAuth } from '@/hooks/useAuth'
+import { useProfile } from '@/hooks/useProfile'
 import {
   format,
   startOfWeek, endOfWeek,
@@ -14,7 +14,6 @@ import {
 } from 'date-fns'
 import { Download, ChevronLeft, ChevronRight, ChevronRight as ChevronRightIcon } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { handleAuthError } from '@/utils/auth-error'
 
 const supabase = createClient()
 const ACCENT = '#a78bfa'
@@ -104,7 +103,7 @@ function sanitizeFilename(s: string): string {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function ReportsPage() {
-  const { profile, profileReady } = useAuth()
+  const { profile, loading: authLoading } = useProfile()
 
   const [mainTab, setMainTab] = useState<MainTab>('clients')
   const [periodTab, setPeriodTab] = useState<PeriodTab>('month')
@@ -158,7 +157,7 @@ export default function ReportsPage() {
       let profQ = supabase.from('profiles').select('id,full_name,department,manager_id').eq('is_active', true)
       if (allowedUserIds !== null) profQ = profQ.in('id', allowedUserIds)
       const { data: profData, error: profError } = await profQ
-      if (handleAuthError(profError)) { setLoading(false); return }
+      if (profError) { setLoading(false); return }
       const profArr = (profData || []) as ProfileDetail[]
       setAllProfiles(profArr)
 
@@ -221,7 +220,7 @@ export default function ReportsPage() {
     }
   }, [profile, startStr, endStr])
 
-  useEffect(() => { if (profileReady) fetchData() }, [profileReady, fetchData])
+  useEffect(() => { if (!authLoading && profile) fetchData() }, [authLoading, profile?.id, fetchData])
 
   // ─── Derived ──────────────────────────────────────────────────────────────
 

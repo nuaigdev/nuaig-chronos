@@ -2,11 +2,10 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useAuth } from '@/hooks/useAuth'
+import { useProfile } from '@/hooks/useProfile'
 import { Timesheet, Profile, TimeLog, DeptRow } from '@/types'
 import { StatusBadge, EmptyState, Modal, FormField } from '@/components/ui'
 import { formatDate, formatHours, getInitials, getWeekRange } from '@/utils'
-import { handleAuthError } from '@/utils/auth-error'
 import { CheckSquare, Check, X, ChevronRight, Clock, AlertCircle, BellRing, LayoutGrid, ChevronDown, Building2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, addDays, startOfWeek, subWeeks } from 'date-fns'
@@ -45,7 +44,7 @@ function getWeekdays(monday: Date): Date[] {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function ApprovalsPage() {
-  const { profile, profileReady, canManageProjects, isAdmin, isManager } = useAuth()
+  const { profile, loading: authLoading, canManageProjects, isAdmin, isManager } = useProfile()
 
   const [activeTab, setActiveTab] = useState<Tab>('approvals')
 
@@ -121,15 +120,15 @@ export default function ApprovalsPage() {
     if (!isAdmin) query = query.in('user_id', reporteeIds)
 
     const { data, error } = await query
-    if (handleAuthError(error)) { setLoading(false); return }
+    if (error) { setLoading(false); return }
     setTimesheets((data || []) as unknown as TimesheetWithUser[])
     setLoading(false)
   }, [profile, canManageProjects, isAdmin, statusFilter, fetchReporteeIds])
 
   useEffect(() => {
-    if (!profileReady) return
+    if (authLoading || !profile) return
     fetchTimesheets()
-  }, [profileReady, fetchTimesheets])
+  }, [authLoading, profile?.id, fetchTimesheets])
 
   // ── Coverage: fetch weekly time log grid ──────────────────────────────────
 
@@ -206,9 +205,9 @@ export default function ApprovalsPage() {
   }, [profile, canManageProjects, isAdmin, weekdayStrs, expandedDept])
 
   useEffect(() => {
-    if (!profileReady || activeTab !== 'coverage') return
+    if (authLoading || !profile || activeTab !== 'coverage') return
     fetchCoverage()
-  }, [profileReady, activeTab, fetchCoverage])
+  }, [authLoading, profile?.id, activeTab, fetchCoverage])
 
   // ── Notify: send reminders to those who haven't submitted last week ────────
 

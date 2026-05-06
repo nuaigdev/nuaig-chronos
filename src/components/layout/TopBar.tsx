@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { Bell, Plus } from 'lucide-react'
 import { useNotifications } from '@/hooks/useNotifications'
-import { useAuth } from '@/hooks/useAuth'
+import { useProfile } from '@/hooks/useProfile'
 import { formatDate } from '@/utils'
 
 const PAGE_TITLES: Record<string, string> = {
@@ -29,7 +29,7 @@ const QUICK_ACTIONS: Record<string, { label: string; href: string }> = {
 export default function TopBar() {
   const pathname = usePathname()
   const { unreadCount } = useNotifications()
-  const { company } = useAuth()
+  const { company } = useProfile()
 
   const title = Object.keys(PAGE_TITLES)
     .sort((a, b) => b.length - a.length)

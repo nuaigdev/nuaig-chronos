@@ -2,17 +2,16 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useAuth } from '@/hooks/useAuth'
+import { useProfile } from '@/hooks/useProfile'
 import { Client } from '@/types'
 import { EmptyState, Modal, FormField, SectionHeader } from '@/components/ui'
 import { Building2, Plus, Search, Edit2, Globe, Phone, Mail, ToggleLeft, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { handleAuthError } from '@/utils/auth-error'
 
 const supabase = createClient()
 
 export default function ClientsPage() {
-  const { profile, canManageProjects } = useAuth()
+  const { profile, canManageProjects } = useProfile()
   const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -27,7 +26,7 @@ export default function ClientsPage() {
   const fetchClients = async () => {
     setLoading(true)
     const { data, error } = await supabase.from('clients').select('*').order('name')
-    if (handleAuthError(error)) { setLoading(false); return }
+    if (error) { setLoading(false); return }
     setClients((data || []) as unknown as Client[])
     setLoading(false)
   }

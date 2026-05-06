@@ -2,11 +2,10 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useAuth } from '@/hooks/useAuth'
+import { useProfile } from '@/hooks/useProfile'
 import { Project, Profile } from '@/types'
 import { StatusBadge, EmptyState, Modal, FormField, Select, ProgressBar } from '@/components/ui'
 import { formatDate, formatHours, getInitials } from '@/utils'
-import { handleAuthError } from '@/utils/auth-error'
 import { FolderKanban, Plus, Search, Archive, Edit2, Clock, Users, UserPlus, X, Trash2 } from 'lucide-react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
@@ -14,7 +13,7 @@ import toast from 'react-hot-toast'
 const supabase = createClient()
 
 export default function ProjectsPage() {
-  const { profile, profileReady, canManageProjects, isAdmin } = useAuth()
+  const { profile, loading: authLoading, canManageProjects, isAdmin } = useProfile()
   const [projects, setProjects] = useState<Project[]>([])
   const [clients, setClients] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(true)
@@ -36,14 +35,12 @@ export default function ProjectsPage() {
   const [memberToAdd, setMemberToAdd] = useState('')
   const [loadingMembers, setLoadingMembers] = useState(false)
 
-  // Gate on profileReady so canManageProjects is accurate before fetching.
-  // Previously [profile?.id] fired while profile was null, causing an early
-  // return and an infinite loading spinner for managers and admins.
+  // Gate on authLoading so canManageProjects is accurate before fetching.
   useEffect(() => {
-    if (!profileReady || !profile) return
+    if (authLoading || !profile) return
     fetchProjects(profile.id, canManageProjects)
     fetchClients()
-  }, [profileReady, statusFilter, profile?.id, canManageProjects])
+  }, [authLoading, statusFilter, profile?.id, canManageProjects])
 
   const fetchProjects = async (profileId: string, canManage: boolean) => {
     setLoading(true)
@@ -62,7 +59,6 @@ export default function ProjectsPage() {
     }
 
     const { data, error } = await query
-    if (handleAuthError(error)) { setLoading(false); return }
     if (error) { toast.error('Failed to load projects'); setLoading(false); return }
 
     const projectData = (data || []) as unknown as Array<Project & { project_members: { user_id: string }[] }>
