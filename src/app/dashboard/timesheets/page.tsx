@@ -395,26 +395,7 @@ export default function TimesheetsPage() {
     return map
   }, [timeLogs])
 
-  // Mon–Fri of this week that are today or in the past (no future days, no weekends)
-  const requiredWorkdays = useMemo(() => {
-    const today = startOfDay(new Date())
-    return weekDays.filter(d => {
-      const dow = d.getDay() // 0=Sun,6=Sat
-      if (dow === 0 || dow === 6) return false  // skip weekends
-      return !isAfter(startOfDay(d), today)     // skip future days
-    })
-  }, [weekDays])
-
-  // Every required workday must have at least one log entry
-  const allWorkdaysFilled = useMemo(() => {
-    if (requiredWorkdays.length === 0) return false
-    return requiredWorkdays.every(d => {
-      const dayStr = format(d, 'yyyy-MM-dd')
-      return (logsByDay[dayStr] || []).length > 0
-    })
-  }, [requiredWorkdays, logsByDay])
-
-  const canSubmit = timesheet && (timesheet.status === 'draft' || timesheet.status === 'rejected') && allWorkdaysFilled
+  const canSubmit = timesheet && (timesheet.status === 'draft' || timesheet.status === 'rejected')
   const totalHours = timeLogs.reduce((s, l) => s + l.hours, 0)
 
   const tsStatus = timesheet?.status || 'draft'
@@ -451,13 +432,10 @@ export default function TimesheetsPage() {
               <BellRing size={14} />{checkingMissed ? 'Checking...' : 'Check Missing'}
             </button>
           )}
-          {(canSubmit || (timesheet && timesheetEditable(timesheet.status))) && (
+          {canSubmit && (
             <button
               className="btn-primary"
               onClick={submitTimesheet}
-              disabled={!canSubmit}
-              title={!canSubmit ? `Log time for all weekdays (Mon–Fri) before submitting` : undefined}
-              style={!canSubmit ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
             >
               <Send size={14} />{tsStatus === 'rejected' ? 'Resubmit' : 'Submit for Approval'}
             </button>
@@ -637,23 +615,6 @@ export default function TimesheetsPage() {
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: '16px', fontWeight: 700, color: 'var(--chronos-accent)' }}>
             {formatHours(totalHours)}
           </div>
-          {(canSubmit || (timesheet && timesheetEditable(timesheet.status))) && (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
-              <button
-                className="btn-primary"
-                onClick={submitTimesheet}
-                disabled={!canSubmit}
-                style={{ padding: '7px 16px', fontSize: '12px', ...(canSubmit ? {} : { opacity: 0.45, cursor: 'not-allowed' }) }}
-              >
-                <Send size={12} />{tsStatus === 'rejected' ? 'Resubmit' : 'Submit'}
-              </button>
-              {!canSubmit && (
-                <span style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', whiteSpace: 'nowrap' }}>
-                  Log all Mon–Fri days to submit
-                </span>
-              )}
-            </div>
-          )}
           {timesheet?.status === 'approved' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--chronos-success, #34d399)', fontWeight: 600 }}>
               <Check size={14} />Approved
