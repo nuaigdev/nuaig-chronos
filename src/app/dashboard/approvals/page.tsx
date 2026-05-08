@@ -301,12 +301,14 @@ export default function ApprovalsPage() {
         return
       }
 
-      // Who already submitted (any status) for this week?
+      // Who has actually submitted (submitted/approved/rejected) for this week?
+      // Draft timesheets count as unsubmitted.
       const { data: submitted } = await supabase
         .from('timesheets')
         .select('user_id')
         .in('user_id', reporteeIds)
         .eq('week_start_date', weekStartStr)
+        .in('status', ['submitted', 'approved', 'rejected'])
 
       const submittedSet = new Set((submitted || []).map(s => s.user_id))
       const missingIds = reporteeIds.filter(id => !submittedSet.has(id))
