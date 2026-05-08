@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useProfile } from '@/hooks/useProfile'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { Timesheet, TimeLog, Project, TaskType, Department } from '@/types'
 import { StatusBadge, EmptyState, Modal, FormField, Select } from '@/components/ui'
 import { formatDate, formatHours, getWeekRange, getWeekDays } from '@/utils'
@@ -56,6 +57,7 @@ const EMPTY_FORM: LogForm = {
 
 export default function TimesheetsPage() {
   const { profile, loading: authLoading, canManageProjects } = useProfile()
+  const isMobile = useIsMobile()
 
   // Week navigation — default to current week
   const [currentWeek, setCurrentWeek] = useState(new Date())
@@ -444,18 +446,20 @@ export default function TimesheetsPage() {
       </div>
 
       {/* ── Week Navigator ── */}
-      <div className="card-base" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+      <div className="card-base" style={{ padding: isMobile ? '12px' : '14px 18px', display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '14px', flexWrap: 'wrap' }}>
         <button className="btn-secondary" onClick={goToPrevWeek} style={{ padding: '6px 10px' }}>
           <ChevronLeft size={14} />
         </button>
 
-        <div style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '15px' }}>
+        <div style={{ flex: 1, textAlign: 'center', minWidth: isMobile ? '120px' : 'auto' }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: isMobile ? '13px' : '15px' }}>
             {format(weekStart, 'MMM d')} – {format(weekEnd, 'MMM d, yyyy')}
           </div>
-          <div style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', marginTop: '2px' }}>
-            {format(weekStart, "'Week of' MMMM d, yyyy")}
-          </div>
+          {!isMobile && (
+            <div style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', marginTop: '2px' }}>
+              {format(weekStart, "'Week of' MMMM d, yyyy")}
+            </div>
+          )}
         </div>
 
         <button
@@ -557,19 +561,21 @@ export default function TimesheetsPage() {
                   <div
                     key={log.id}
                     className="table-row"
-                    style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: '12px' }}
+                    style={{ padding: isMobile ? '10px 12px' : '10px 16px', display: 'flex', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? '8px' : '12px', flexWrap: isMobile ? 'wrap' : 'nowrap' }}
                   >
-                    <div style={{ width: '140px', flexShrink: 0 }}>
-                      <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--chronos-text)' }}>
+                    <div style={{ width: isMobile ? 'auto' : '140px', flexShrink: isMobile ? 1 : 0, flex: isMobile ? 1 : undefined, minWidth: 0 }}>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--chronos-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {(log.project as Project | undefined)?.name || '—'}
                       </div>
                       <div style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', marginTop: '1px' }}>
                         {(log.task_type as TaskType | undefined)?.name || '—'}
                       </div>
                     </div>
-                    <div style={{ flex: 1, fontSize: '13px', color: 'var(--chronos-text-subtle)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {log.description || ''}
-                    </div>
+                    {!isMobile && (
+                      <div style={{ flex: 1, fontSize: '13px', color: 'var(--chronos-text-subtle)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {log.description || ''}
+                      </div>
+                    )}
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: 'var(--chronos-text)', flexShrink: 0 }}>
                       {log.hours}h
                     </div>

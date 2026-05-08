@@ -7,12 +7,12 @@ import { Bell, Check, CheckCheck, Clock, FileText, AlertCircle } from 'lucide-re
 import { EmptyState } from '@/components/ui'
 
 const ICONS: Record<string, React.ReactNode> = {
-  timesheet_submitted: <FileText size={16} style={{ color: '#60a5fa' }} />,
-  timesheet_approved: <Check size={16} style={{ color: '#34d399' }} />,
-  timesheet_rejected: <AlertCircle size={16} style={{ color: '#f87171' }} />,
-  time_log_reminder: <Clock size={16} style={{ color: '#fbbf24' }} />,
-  timesheet_reminder: <Clock size={16} style={{ color: '#fbbf24' }} />,
-  pending_approval_alert: <AlertCircle size={16} style={{ color: '#f87171' }} />,
+  timesheet_submitted: <FileText size={16} style={{ color: 'var(--chronos-info)' }} />,
+  timesheet_approved: <Check size={16} style={{ color: 'var(--chronos-success)' }} />,
+  timesheet_rejected: <AlertCircle size={16} style={{ color: 'var(--chronos-danger)' }} />,
+  time_log_reminder: <Clock size={16} style={{ color: 'var(--chronos-warning)' }} />,
+  timesheet_reminder: <Clock size={16} style={{ color: 'var(--chronos-warning)' }} />,
+  pending_approval_alert: <AlertCircle size={16} style={{ color: 'var(--chronos-danger)' }} />,
 }
 
 export default function NotificationsPage() {
@@ -48,17 +48,17 @@ export default function NotificationsPage() {
                 gap: '14px',
                 alignItems: 'flex-start',
                 borderBottom: i < notifications.length - 1 ? '1px solid var(--chronos-border)' : 'none',
-                background: n.is_read ? 'transparent' : 'rgba(59,130,246,0.04)',
+                background: n.is_read ? 'transparent' : 'var(--chronos-accent-glow)',
                 cursor: n.is_read ? 'default' : 'pointer',
                 transition: 'background 0.15s',
               }}
               onMouseEnter={e => { if (!n.is_read) e.currentTarget.style.background = 'rgba(59,130,246,0.08)' }}
-              onMouseLeave={e => { if (!n.is_read) e.currentTarget.style.background = 'rgba(59,130,246,0.04)' }}
+              onMouseLeave={e => { if (!n.is_read) e.currentTarget.style.background = 'var(--chronos-accent-glow)' }}
             >
               <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--chronos-surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 {ICONS[n.type] || <Bell size={16} style={{ color: 'var(--chronos-text-muted)' }} />}
               </div>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
                   <span style={{ fontSize: '14px', fontWeight: n.is_read ? 400 : 600, color: 'var(--chronos-text)' }}>{n.title}</span>
                   <span style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', flexShrink: 0 }}>{formatDate(n.created_at, 'MMM d, h:mm a')}</span>

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useProfile } from '@/hooks/useProfile'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { StatCard, StatusBadge, ProgressBar, SectionHeader } from '@/components/ui'
 import { formatHours, formatDate, getWeekRange, calculateCompletionPercentage } from '@/utils'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -26,6 +27,7 @@ export default function DashboardPage() {
   const { profile, loading: authLoading, canManageProjects } = useProfile()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [loading, setLoading] = useState(true)
+  const isMobile = useIsMobile()
 
   const fetchStats = useCallback(async () => {
     if (!profile) return
@@ -147,14 +149,14 @@ export default function DashboardPage() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? '16px' : '24px' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', alignItems: isMobile ? 'flex-start' : 'flex-start', justifyContent: 'space-between', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? '12px' : '0' }}>
         <div>
-          <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: '24px', fontWeight: 800, letterSpacing: '-0.03em' }}>
+          <h1 style={{ fontFamily: 'Syne, sans-serif', fontSize: isMobile ? '20px' : '24px', fontWeight: 800, letterSpacing: '-0.03em' }}>
             {greeting()}, <span className="gradient-text">{profile?.full_name?.split(' ')[0]}</span> 👋
           </h1>
-          <p style={{ color: 'var(--chronos-text-muted)', fontSize: '14px', marginTop: '4px' }}>
+          <p style={{ color: 'var(--chronos-text-muted)', fontSize: isMobile ? '12px' : '14px', marginTop: '4px' }}>
             {formatDate(new Date(), 'EEEE, MMMM d, yyyy')}
           </p>
         </div>
@@ -176,7 +178,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats */}
-      <div className="stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+      <div className="stagger" style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: isMobile ? '10px' : '16px' }}>
         <StatCard
           label="Hours This Week"
           value={formatHours(stats?.totalHoursThisWeek || 0)}
@@ -214,12 +216,12 @@ export default function DashboardPage() {
       </div>
 
       {/* Chart + Projects */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? '16px' : '20px' }}>
         {/* Hours Chart */}
-        <div className="card-base" style={{ padding: '20px' }}>
+        <div className="card-base" style={{ padding: isMobile ? '16px' : '20px' }}>
           <SectionHeader title="Hours This Week" subtitle="Daily time logged" />
           <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={stats?.recentTimeLogs || []} barSize={28}>
+            <BarChart data={stats?.recentTimeLogs || []} barSize={isMobile ? 20 : 28}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--chronos-border)" vertical={false} />
               <XAxis dataKey="date" tick={{ fill: 'var(--chronos-text-muted)', fontSize: 12, fontFamily: 'DM Sans, sans-serif' }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: 'var(--chronos-text-muted)', fontSize: 12, fontFamily: 'DM Sans, sans-serif' }} axisLine={false} tickLine={false} />
@@ -235,7 +237,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Active Projects */}
-        <div className="card-base" style={{ padding: '20px' }}>
+        <div className="card-base" style={{ padding: isMobile ? '16px' : '20px' }}>
           <SectionHeader
             title="Active Projects"
             action={

@@ -39,6 +39,7 @@ interface RawLog {
   project_id: string
   user_id: string
   description?: string | null
+  task_type_id?: string | null
 }
 
 interface EnrichedLog extends RawLog {
@@ -48,7 +49,10 @@ interface EnrichedLog extends RawLog {
   userName: string
   department: string
   managerId: string | null
+  taskTypeName: string
 }
+
+interface TaskTypeDetail { id: string; name: string }
 
 interface ProjectDetail { id: string; name: string; client_id: string | null }
 interface ClientDetail { id: string; name: string }
@@ -162,7 +166,7 @@ export default function ReportsPage() {
       setAllProfiles(profArr)
 
       // Fetch time logs
-      let logsQ = supabase.from('time_logs').select('id,hours,log_date,project_id,user_id,description')
+      let logsQ = supabase.from('time_logs').select('id,hours,log_date,project_id,user_id,description,task_type_id')
         .gte('log_date', startStr).lte('log_date', endStr)
       if (allowedUserIds !== null) logsQ = logsQ.in('user_id', allowedUserIds)
       const { data: rawLogs } = await logsQ
@@ -174,6 +178,7 @@ export default function ReportsPage() {
 
       const projIds = Array.from(new Set(raw.map(l => l.project_id)))
       const userIds = Array.from(new Set(raw.map(l => l.user_id)))
+      const taskTypeIds = Array.from(new Set(raw.map(l => l.task_type_id).filter(Boolean))) as string[]
 
       const [projRes, userRes] = await Promise.all([
         supabase.from('projects').select('id,name,client_id').in('id', projIds),
@@ -187,6 +192,13 @@ export default function ReportsPage() {
       for (const p of projArr) projMap[p.id] = p
       const profMap: Record<string, ProfileDetail> = {}
       for (const p of userArr) profMap[p.id] = p
+
+      // Fetch task types
+      const taskTypeMap: Record<string, TaskTypeDetail> = {}
+      if (taskTypeIds.length) {
+        const { data: ttData } = await supabase.from('task_types').select('id,name').in('id', taskTypeIds)
+        for (const tt of (ttData || []) as TaskTypeDetail[]) taskTypeMap[tt.id] = tt
+      }
 
       const clientIds = Array.from(new Set(projArr.map(p => p.client_id).filter(Boolean))) as string[]
       let clientArr: ClientDetail[] = []
@@ -202,6 +214,7 @@ export default function ReportsPage() {
         const proj = projMap[l.project_id]
         const prof = profMap[l.user_id]
         const client = proj?.client_id ? clientMap[proj.client_id] : null
+        const taskType = l.task_type_id ? taskTypeMap[l.task_type_id] : null
         return {
           ...l,
           projectName: proj?.name || 'Unknown Project',
@@ -210,6 +223,7 @@ export default function ReportsPage() {
           userName: prof?.full_name || 'Unknown',
           department: prof?.department || 'Unassigned',
           managerId: prof?.manager_id ?? null,
+          taskTypeName: taskType?.name || '—',
         }
       })
       setLogs(enriched)
@@ -347,38 +361,49 @@ export default function ReportsPage() {
     if (singleResource) {
       // Single-resource export: per-time-log rows.
       // Filename: FullEmployeeName_Dept_Timeperiod.csv
-      // Columns:  Resource Name | Date | Note | Client | Project | Time
+      // Columns:  Resource Name | Date | Client | Project | Task Type | Description | Time
       const rows: string[][] = []
       const sortedLogs = [...singleResource.allLogs].sort((a, b) => a.log_date.localeCompare(b.log_date))
       for (const log of sortedLogs) {
         rows.push([
           singleResource.userName,
           format(new Date(log.log_date + 'T00:00:00'), 'yyyy-MM-dd'),
-          log.description || '',
           log.clientName,
           log.projectName,
+          log.taskTypeName,
+          log.description || '',
           log.hours.toFixed(1),
         ])
       }
       const filename = `${sanitizeFilename(singleResource.userName)}_${sanitizeFilename(singleResource.department)}_${sanitizeFilename(pLabel)}.csv`
-      downloadCSV(filename, rows, ['Resource Name', 'Date', 'Note', 'Client', 'Project', 'Time (h)'])
+      downloadCSV(filename, rows, ['Resource Name', 'Date', 'Client', 'Project', 'Task Type', 'Description', 'Time (h)'])
       toast.success('CSV downloaded')
       return
     }
 
-    // Bulk resource export (all resources / all departments): one row per
-    // resource × client × project. NO time-log breakdown — per spec.
-    // Columns: Resource | Department | Client | Project | Time
-    const rows: string[][] = []
+    // Bulk resource export (all resources): individual time-log rows,
+    // sorted first by person name, then by date, then by time logged.
+    // Columns: Resource Name | Date | Client | Project | Task Type | Description | Time
+    const allLogs: EnrichedLog[] = []
     for (const res of resourceData) {
-      const sortedCP = Object.values(res.clientProjects).sort((a, b) =>
-        a.clientName.localeCompare(b.clientName) || a.projectName.localeCompare(b.projectName)
-      )
-      for (const cp of sortedCP) {
-        rows.push([res.userName, res.department, cp.clientName, cp.projectName, cp.hours.toFixed(1)])
-      }
+      allLogs.push(...res.allLogs)
     }
-    downloadCSV(`resource_report_${startStr}_${endStr}.csv`, rows, ['Resource', 'Department', 'Client', 'Project', 'Time (h)'])
+    allLogs.sort((a, b) =>
+      a.userName.localeCompare(b.userName) || a.log_date.localeCompare(b.log_date) || a.hours - b.hours
+    )
+    const rows: string[][] = []
+    for (const log of allLogs) {
+      rows.push([
+        log.userName,
+        format(new Date(log.log_date + 'T00:00:00'), 'yyyy-MM-dd'),
+        log.clientName,
+        log.projectName,
+        log.taskTypeName,
+        log.description || '',
+        log.hours.toFixed(1),
+      ])
+    }
+    downloadCSV(`resource_report_${startStr}_${endStr}.csv`, rows, ['Resource Name', 'Date', 'Client', 'Project', 'Task Type', 'Description', 'Time (h)'])
     toast.success('CSV downloaded')
   }
 

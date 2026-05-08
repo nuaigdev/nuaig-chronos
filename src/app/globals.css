@@ -2,8 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  /* Chronos Design System - Dark Theme */
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHRONOS DESIGN SYSTEM — DARK THEME (default)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root,
+html.dark {
   --chronos-bg: #0c0f1a;
   --chronos-surface: #111827;
   --chronos-surface-2: #1a2235;
@@ -23,7 +27,37 @@
   --font-display: 'Outfit', sans-serif;
   --font-body: 'Inter', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
+
+  --chronos-scrollbar-thumb: #2d4060;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT THEME
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+html.light {
+  --chronos-bg: #f5f7fa;
+  --chronos-surface: #ffffff;
+  --chronos-surface-2: #f0f2f5;
+  --chronos-border: #e2e6ec;
+  --chronos-border-bright: #cbd2dc;
+  --chronos-text: #1a1f2e;
+  --chronos-text-muted: #6b7a90;
+  --chronos-text-subtle: #4a5568;
+  --chronos-accent: #2563eb;
+  --chronos-accent-glow: rgba(37, 99, 235, 0.10);
+  --chronos-accent-2: #7c3aed;
+  --chronos-success: #059669;
+  --chronos-warning: #d97706;
+  --chronos-danger: #dc2626;
+  --chronos-info: #2563eb;
+
+  --chronos-scrollbar-thumb: #cbd2dc;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BASE STYLES
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 * {
   box-sizing: border-box;
@@ -46,7 +80,7 @@ body {
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--chronos-border-bright); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--chronos-scrollbar-thumb); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--chronos-text-muted); }
 
 /* Typography */
@@ -108,6 +142,9 @@ h1, h2, h3, h4, h5, h6 {
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
   }
+  html.light .glass {
+    background: rgba(255, 255, 255, 0.85);
+  }
 
   .gradient-text {
     background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
@@ -135,6 +172,12 @@ h1, h2, h3, h4, h5, h6 {
     background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
     transform: translateY(-1px);
     box-shadow: 0 4px 20px rgba(59,130,246,0.3);
+  }
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
   }
 
   .btn-secondary {
@@ -224,7 +267,10 @@ h1, h2, h3, h4, h5, h6 {
     border-bottom: none;
   }
 
-  /* Animations */
+  /* ═════════════════════════════════════════════════════════════════════════
+     ANIMATIONS
+     ═════════════════════════════════════════════════════════════════════════ */
+
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: translateY(0); }
@@ -240,6 +286,10 @@ h1, h2, h3, h4, h5, h6 {
     50% { box-shadow: 0 0 20px rgba(59,130,246,0.3); }
   }
 
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
   .animate-fade-in { animation: fadeIn 0.3s ease forwards; }
   .animate-slide-in { animation: slideIn 0.3s ease forwards; }
   .animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
@@ -252,4 +302,117 @@ h1, h2, h3, h4, h5, h6 {
   .stagger > *:nth-child(4) { animation-delay: 0.2s; }
   .stagger > *:nth-child(5) { animation-delay: 0.25s; }
   .stagger > *:nth-child(6) { animation-delay: 0.3s; }
+
+  /* ═════════════════════════════════════════════════════════════════════════
+     RESPONSIVE — DESKTOP / MOBILE VISIBILITY
+     ═════════════════════════════════════════════════════════════════════════ */
+
+  .desktop-only { display: contents; }
+  .mobile-only { display: none; }
+
+  .main-content {
+    padding: 24px;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════════
+     MOBILE COMPONENTS
+     ═════════════════════════════════════════════════════════════════════════ */
+
+  .mobile-header {
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    background: var(--chronos-surface);
+    border-bottom: 1px solid var(--chronos-border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .mobile-bottom-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    height: 64px;
+    background: var(--chronos-surface);
+    border-top: 1px solid var(--chronos-border);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .mobile-tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    color: var(--chronos-text-muted);
+    text-decoration: none;
+    font-size: 11px;
+    font-weight: 500;
+    transition: color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-tab.active {
+    color: var(--chronos-accent);
+  }
+  .mobile-tab-label {
+    line-height: 1;
+  }
+
+  .mobile-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: none;
+    border: none;
+    color: var(--chronos-text-muted);
+    font-size: 13px;
+    font-family: var(--font-body);
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: left;
+  }
+  .mobile-menu-item:hover {
+    background: var(--chronos-surface-2);
+    color: var(--chronos-text);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MOBILE BREAKPOINT — max 768px
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 768px) {
+  .desktop-only {
+    display: none !important;
+  }
+  .mobile-only {
+    display: contents !important;
+  }
+
+  .main-content {
+    padding: 16px !important;
+    padding-bottom: 80px !important;
+  }
+
+  .card-base {
+    border-radius: 12px;
+  }
+
+  /* Prevent iOS zoom on input focus */
+  .input-base {
+    font-size: 16px;
+  }
+
+  /* Ensure buttons are tap-friendly */
+  .btn-primary,
+  .btn-secondary {
+    min-height: 42px;
+  }
 }

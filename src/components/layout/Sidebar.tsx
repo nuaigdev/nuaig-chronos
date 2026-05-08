@@ -4,13 +4,14 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useProfile } from '@/hooks/useProfile'
 import { useNotifications } from '@/hooks/useNotifications'
+import { useTheme } from '@/hooks/useTheme'
 import { createClient } from '@/lib/supabase/client'
 import { getInitials } from '@/utils'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import {
   LayoutDashboard, FolderKanban, FileText,
-  Users, BarChart3, Settings, Bell, Building2, LogOut, KeyRound, X, Layers
+  Users, BarChart3, Settings, Bell, Building2, LogOut, KeyRound, X, Layers, Sun, Moon
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -60,6 +61,7 @@ export default function Sidebar() {
   const router = useRouter()
   const { profile, isAdmin, isManager } = useProfile()
   const { unreadCount } = useNotifications()
+  const { theme, toggleTheme } = useTheme()
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [passwordForm, setPasswordForm] = useState({ newPassword: '', confirmPassword: '' })
   const [changingPassword, setChangingPassword] = useState(false)
@@ -207,6 +209,13 @@ export default function Sidebar() {
               {profile?.role}
             </div>
           </div>
+          <button onClick={toggleTheme} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px', borderRadius: '6px', display: 'flex', transition: 'color 0.15s' }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--chronos-accent)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--chronos-text-muted)')}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
           <button onClick={() => setShowPasswordModal(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px', borderRadius: '6px', display: 'flex', transition: 'color 0.15s' }}
             onMouseEnter={e => (e.currentTarget.style.color = 'var(--chronos-accent)')}
             onMouseLeave={e => (e.currentTarget.style.color = 'var(--chronos-text-muted)')}

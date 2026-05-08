@@ -2,7 +2,8 @@ import type { Metadata } from 'next'
 import { Inter, Outfit, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import { NotificationsProvider } from '@/hooks/useNotifications'
-import { Toaster } from 'react-hot-toast'
+import { ThemeProvider } from '@/hooks/useTheme'
+import { ThemeAwareToaster } from '@/components/layout/ThemeAwareToaster'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -32,25 +33,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <body className={`${inter.variable} ${outfit.variable} ${jetbrainsMono.variable} bg-chronos-bg text-chronos-text antialiased`}>
-        <NotificationsProvider>
-          {children}
-          <Toaster
-            position="top-right"
-            toastOptions={{
-              style: {
-                background: '#1a1f2e',
-                color: '#e2e8f0',
-                border: '1px solid #2d3748',
-                borderRadius: '12px',
-                fontFamily: 'var(--font-body)',
-              },
-              success: { iconTheme: { primary: '#34d399', secondary: '#1a1f2e' } },
-              error: { iconTheme: { primary: '#f87171', secondary: '#1a1f2e' } },
-            }}
-          />
-        </NotificationsProvider>
+        <ThemeProvider>
+          <NotificationsProvider>
+            {children}
+            <ThemeAwareToaster />
+          </NotificationsProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

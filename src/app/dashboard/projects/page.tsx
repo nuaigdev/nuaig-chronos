@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useProfile } from '@/hooks/useProfile'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { Project, Profile } from '@/types'
 import { StatusBadge, EmptyState, Modal, FormField, Select, ProgressBar } from '@/components/ui'
 import { formatDate, formatHours, getInitials } from '@/utils'
@@ -14,6 +15,7 @@ const supabase = createClient()
 
 export default function ProjectsPage() {
   const { profile, loading: authLoading, canManageProjects, isAdmin } = useProfile()
+  const isMobile = useIsMobile()
   const [projects, setProjects] = useState<Project[]>([])
   const [clients, setClients] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(true)
@@ -286,14 +288,14 @@ export default function ProjectsPage() {
       </div>
 
       {/* Filters */}
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-        <div style={{ position: 'relative', flex: 1, maxWidth: '360px' }}>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: isMobile ? '100%' : '200px', maxWidth: isMobile ? '100%' : '360px' }}>
           <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--chronos-text-muted)' }} />
           <input className="input-base" style={{ paddingLeft: '36px' }} placeholder="Search projects..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         {(['all', 'active', 'completed', 'archived'] as const).map(s => (
           <button key={s} onClick={() => setStatusFilter(s)} style={{
-            padding: '8px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, cursor: 'pointer',
+            padding: isMobile ? '6px 10px' : '8px 14px', borderRadius: '8px', fontSize: isMobile ? '12px' : '13px', fontWeight: 500, cursor: 'pointer',
             border: statusFilter === s ? '1px solid var(--chronos-accent)' : '1px solid var(--chronos-border)',
             background: statusFilter === s ? 'var(--chronos-accent-glow)' : 'var(--chronos-surface)',
             color: statusFilter === s ? 'var(--chronos-accent)' : 'var(--chronos-text-muted)',
@@ -317,7 +319,7 @@ export default function ProjectsPage() {
           action={canManageProjects ? <button className="btn-primary" onClick={openCreate}><Plus size={14} />Create Project</button> : undefined}
         />
       ) : (
-        <div className="stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
+        <div className="stagger" style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
           {filtered.map(p => {
             const members = (p.project_members as { user: { full_name: string } }[] | undefined) || []
             const client = p.client as { name: string } | undefined
