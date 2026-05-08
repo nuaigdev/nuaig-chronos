@@ -6,9 +6,9 @@ import { useProfile } from '@/hooks/useProfile'
 import { Timesheet, Profile, TimeLog, DeptRow } from '@/types'
 import { StatusBadge, EmptyState, Modal, FormField } from '@/components/ui'
 import { formatDate, formatHours, getInitials, getWeekRange } from '@/utils'
-import { CheckSquare, Check, X, ChevronRight, Clock, AlertCircle, BellRing, LayoutGrid, ChevronDown, Building2 } from 'lucide-react'
+import { CheckSquare, Check, X, ChevronRight, Clock, AlertCircle, BellRing, LayoutGrid, ChevronDown, Building2, Send } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { format, addDays, startOfWeek, subWeeks } from 'date-fns'
+import { format, addDays, startOfWeek, endOfWeek, subWeeks } from 'date-fns'
 
 const supabase = createClient()
 
@@ -53,10 +53,17 @@ export default function ApprovalsPage() {
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [logs, setLogs] = useState<Record<string, TimeLog[]>>({})
-  const [statusFilter, setStatusFilter] = useState<'submitted' | 'approved' | 'rejected' | 'all'>('submitted')
+  const [statusFilter, setStatusFilter] = useState<'submitted' | 'approved' | 'rejected' | 'all' | 'unsubmitted'>('submitted')
   const [reviewModal, setReviewModal] = useState<{ id: string; action: 'approve' | 'reject' } | null>(null)
   const [comment, setComment] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // ── Unsubmitted tab state ────────────────────────────────────────────────
+  const [unsubmittedMembers, setUnsubmittedMembers] = useState<{ id: string; full_name: string; email: string; department: string }[]>([])
+  const [unsubmittedLoading, setUnsubmittedLoading] = useState(false)
+  const [nudgingIds, setNudgingIds] = useState<Set<string>>(new Set())
+  const [nudgedIds, setNudgedIds] = useState<Set<string>>(new Set())
+  const [nudgingAll, setNudgingAll] = useState(false)
 
   // ── Coverage tab state ────────────────────────────────────────────────────
   const [coverageWeek, setCoverageWeek] = useState<Date>(getCurrentMonday())
@@ -278,6 +285,112 @@ export default function ApprovalsPage() {
     }
   }
 
+  // ── Unsubmitted: fetch members who haven't submitted for the current week ──
+
+  const fetchUnsubmitted = useCallback(async () => {
+    if (!profile || !canManageProjects) return
+    setUnsubmittedLoading(true)
+    try {
+      const currentMonday = startOfWeek(new Date(), { weekStartsOn: 1 })
+      const weekStartStr = format(currentMonday, 'yyyy-MM-dd')
+
+      const reporteeIds = await fetchReporteeIds()
+      if (!reporteeIds.length) {
+        setUnsubmittedMembers([])
+        setUnsubmittedLoading(false)
+        return
+      }
+
+      // Who already submitted (any status) for this week?
+      const { data: submitted } = await supabase
+        .from('timesheets')
+        .select('user_id')
+        .in('user_id', reporteeIds)
+        .eq('week_start_date', weekStartStr)
+
+      const submittedSet = new Set((submitted || []).map(s => s.user_id))
+      const missingIds = reporteeIds.filter(id => !submittedSet.has(id))
+
+      if (!missingIds.length) {
+        setUnsubmittedMembers([])
+        setUnsubmittedLoading(false)
+        return
+      }
+
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, department')
+        .in('id', missingIds)
+        .order('full_name')
+
+      setUnsubmittedMembers((profiles || []) as { id: string; full_name: string; email: string; department: string }[])
+    } catch {
+      toast.error('Failed to load unsubmitted members')
+    } finally {
+      setUnsubmittedLoading(false)
+    }
+  }, [profile, canManageProjects, fetchReporteeIds])
+
+  useEffect(() => {
+    if (authLoading || !profile || activeTab !== 'approvals' || statusFilter !== 'unsubmitted') return
+    fetchUnsubmitted()
+    setNudgedIds(new Set())
+  }, [authLoading, profile?.id, activeTab, statusFilter, fetchUnsubmitted])
+
+  const nudgeMember = async (memberId: string, memberName: string) => {
+    if (!profile) return
+    setNudgingIds(prev => new Set(prev).add(memberId))
+    try {
+      const currentMonday = startOfWeek(new Date(), { weekStartsOn: 1 })
+      const weekLabel = format(currentMonday, 'MMM d, yyyy')
+
+      await supabase.from('notifications').insert({
+        user_id: memberId,
+        type: 'timesheet_reminder' as const,
+        title: 'Timesheet Submission Reminder',
+        message: `Please submit your timesheet for the week of ${weekLabel}. Your manager is awaiting your submission.`,
+      })
+
+      setNudgedIds(prev => new Set(prev).add(memberId))
+      toast.success(`Reminder sent to ${memberName}`)
+    } catch {
+      toast.error(`Failed to notify ${memberName}`)
+    } finally {
+      setNudgingIds(prev => { const n = new Set(prev); n.delete(memberId); return n })
+    }
+  }
+
+  const nudgeAll = async () => {
+    if (!profile) return
+    const toNudge = unsubmittedMembers.filter(m => !nudgedIds.has(m.id))
+    if (!toNudge.length) { toast('All members have already been nudged'); return }
+    setNudgingAll(true)
+    try {
+      const currentMonday = startOfWeek(new Date(), { weekStartsOn: 1 })
+      const weekLabel = format(currentMonday, 'MMM d, yyyy')
+
+      await supabase.from('notifications').insert(
+        toNudge.map(m => ({
+          user_id: m.id,
+          type: 'timesheet_reminder' as const,
+          title: 'Timesheet Submission Reminder',
+          message: `Please submit your timesheet for the week of ${weekLabel}. Your manager is awaiting your submission.`,
+        }))
+      )
+
+      setNudgedIds(prev => {
+        const n = new Set(prev)
+        toNudge.forEach(m => n.add(m.id))
+        return n
+      })
+      toast.success(`Reminders sent to ${toNudge.length} member${toNudge.length > 1 ? 's' : ''}`)
+    } catch {
+      toast.error('Failed to send reminders')
+    } finally {
+      setNudgingAll(false)
+    }
+  }
+
   // ── Approvals helpers ─────────────────────────────────────────────────────
 
   const fetchLogs = async (timesheetId: string) => {
@@ -430,20 +543,101 @@ export default function ApprovalsPage() {
       {activeTab === 'approvals' && (
         <>
           {/* Status filter */}
-          <div style={{ display: 'flex', gap: '8px' }}>
-            {(['submitted', 'approved', 'rejected', 'all'] as const).map(s => (
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {(['submitted', 'approved', 'rejected', 'all', 'unsubmitted'] as const).map(s => (
               <button key={s} onClick={() => setStatusFilter(s)} style={{
                 padding: '8px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, cursor: 'pointer',
                 border: statusFilter === s ? '1px solid var(--chronos-accent)' : '1px solid var(--chronos-border)',
                 background: statusFilter === s ? 'var(--chronos-accent-glow)' : 'var(--chronos-surface)',
                 color: statusFilter === s ? 'var(--chronos-accent)' : 'var(--chronos-text-muted)',
               }}>
-                {s === 'submitted' ? 'Pending' : s.charAt(0).toUpperCase() + s.slice(1)}
+                {s === 'submitted' ? 'Pending' : s === 'unsubmitted' ? 'Unsubmitted' : s.charAt(0).toUpperCase() + s.slice(1)}
               </button>
             ))}
           </div>
 
-          {loading ? (
+          {statusFilter === 'unsubmitted' ? (
+            /* ─── Unsubmitted view ─────────────────────────────────────────── */
+            unsubmittedLoading ? (
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '60px' }}>
+                <div style={{ width: '28px', height: '28px', border: '3px solid var(--chronos-border)', borderTopColor: 'var(--chronos-accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+              </div>
+            ) : unsubmittedMembers.length === 0 ? (
+              <EmptyState icon={<CheckSquare size={28} />} title="Everyone has submitted!" description="All team members have submitted their timesheet for the current week." />
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {/* Header with nudge all */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>
+                    {unsubmittedMembers.length} member{unsubmittedMembers.length > 1 ? 's have' : ' has'} not submitted for the week of {format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'MMM d, yyyy')}
+                  </span>
+                  <button
+                    className="btn-primary"
+                    onClick={nudgeAll}
+                    disabled={nudgingAll || unsubmittedMembers.every(m => nudgedIds.has(m.id))}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '8px 16px' }}
+                  >
+                    <BellRing size={13} />
+                    {nudgingAll ? 'Sending…' : unsubmittedMembers.every(m => nudgedIds.has(m.id)) ? 'All Nudged' : 'Nudge All'}
+                  </button>
+                </div>
+
+                {/* Member cards */}
+                <div className="card-base" style={{ overflow: 'hidden' }}>
+                  {/* Column header */}
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '1fr 1fr 120px',
+                    padding: '8px 20px', background: 'var(--chronos-surface-2)',
+                    borderBottom: '1px solid var(--chronos-border)',
+                  }}>
+                    {['Name', 'Department', 'Action'].map(col => (
+                      <span key={col} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{col}</span>
+                    ))}
+                  </div>
+
+                  {unsubmittedMembers.map((member, idx) => {
+                    const isNudging = nudgingIds.has(member.id)
+                    const wasNudged = nudgedIds.has(member.id)
+                    return (
+                      <div key={member.id} style={{
+                        display: 'grid', gridTemplateColumns: '1fr 1fr 120px',
+                        padding: '14px 20px', alignItems: 'center',
+                        borderBottom: idx < unsubmittedMembers.length - 1 ? '1px solid var(--chronos-border)' : 'none',
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'linear-gradient(135deg, #f87171, #ef4444)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 700, color: 'white', fontFamily: 'Syne, sans-serif', flexShrink: 0 }}>
+                            {getInitials(member.full_name)}
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '13px', fontWeight: 600 }}>{member.full_name}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--chronos-text-muted)' }}>{member.email}</div>
+                          </div>
+                        </div>
+                        <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{member.department || '—'}</span>
+                        <div>
+                          {wasNudged ? (
+                            <span style={{ fontSize: '12px', color: 'var(--chronos-success)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <Check size={13} /> Nudged
+                            </span>
+                          ) : (
+                            <button
+                              className="btn-secondary"
+                              onClick={() => nudgeMember(member.id, member.full_name)}
+                              disabled={isNudging}
+                              style={{ padding: '6px 12px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '5px' }}
+                            >
+                              <Send size={12} />
+                              {isNudging ? 'Sending…' : 'Nudge'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          ) : loading ? (
             <div style={{ display: 'flex', justifyContent: 'center', padding: '60px' }}>
               <div style={{ width: '28px', height: '28px', border: '3px solid var(--chronos-border)', borderTopColor: 'var(--chronos-accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
             </div>
