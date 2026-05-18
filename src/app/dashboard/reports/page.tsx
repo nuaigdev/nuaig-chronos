@@ -12,15 +12,20 @@ import {
   addMonths, subMonths,
   addYears, subYears,
 } from 'date-fns'
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine,
+} from 'recharts'
 import { Download, ChevronLeft, ChevronRight, ChevronRight as ChevronRightIcon } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const supabase = createClient()
 const ACCENT = '#a78bfa'
+const DEPT_COLORS = [
+  '#3b82f6', '#8b5cf6', '#34d399', '#f59e0b',
+  '#ef4444', '#06b6d4', '#f97316', '#ec4899', '#84cc16', '#6366f1',
+]
 
-// Grid templates for the resource tab. Centralised so the column widths
-// stay aligned across the header, body rows, and totals row.
-const BULK_GRID = '2fr 1.5fr 2fr 2fr 100px'           // Resource | Dept | Client | Project | Time
+const BULK_GRID = '2fr 1.5fr 2fr 2fr 100px'
 const SINGLE_DATE_COL = '1.4fr'
 const SINGLE_NOTE_COL = '2fr'
 const SINGLE_CLIENT_COL = '1.5fr'
@@ -29,39 +34,39 @@ const SINGLE_TIME_COL = '100px'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type MainTab = 'clients' | 'resource'
+type MainTab = 'clients' | 'resource' | 'utilization'
 type PeriodTab = 'week' | 'month' | 'annual'
 
 interface RawLog {
-  id: string
-  hours: number
-  log_date: string
-  project_id: string
-  user_id: string
-  description?: string | null
-  task_type_id?: string | null
+  id: string; hours: number; log_date: string; project_id: string; user_id: string
+  description?: string | null; task_type_id?: string | null
 }
 
 interface EnrichedLog extends RawLog {
-  projectName: string
-  clientId: string | null
-  clientName: string
-  userName: string
-  department: string
-  managerId: string | null
-  taskTypeName: string
+  projectName: string; clientId: string | null; clientName: string
+  userName: string; department: string; managerId: string | null; taskTypeName: string
 }
 
 interface TaskTypeDetail { id: string; name: string }
-
 interface ProjectDetail { id: string; name: string; client_id: string | null }
 interface ClientDetail { id: string; name: string }
-interface ProfileDetail { id: string; full_name: string; department: string; manager_id: string | null }
+interface ProfileDetail { id: string; full_name: string; department: string; manager_id: string | null; role: string }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function h(v: number) { return `${v.toFixed(1)}h` }
 function sumH(ls: EnrichedLog[]) { return ls.reduce((s, l) => s + l.hours, 0) }
+
+function countWeekdays(start: Date, end: Date): number {
+  let count = 0
+  const cur = new Date(start)
+  while (cur <= end) {
+    const dow = cur.getDay()
+    if (dow !== 0 && dow !== 6) count++
+    cur.setDate(cur.getDate() + 1)
+  }
+  return count
+}
 
 function getPeriodRange(tab: PeriodTab, nav: number): { start: Date; end: Date; label: string } {
   const base = new Date()
@@ -77,7 +82,6 @@ function getPeriodRange(tab: PeriodTab, nav: number): { start: Date; end: Date; 
     const end = endOfMonth(anchor)
     return { start, end, label: format(start, 'MMMM yyyy') }
   }
-  // annual
   const anchor = nav >= 0 ? addYears(base, nav) : subYears(base, -nav)
   const start = startOfYear(anchor)
   const end = endOfYear(anchor)
@@ -86,15 +90,12 @@ function getPeriodRange(tab: PeriodTab, nav: number): { start: Date; end: Date; 
 
 function downloadCSV(filename: string, rows: string[][], headers: string[]) {
   const lines = [headers.join(','), ...rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))]
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a'); a.href = url; a.download = filename; a.click()
   URL.revokeObjectURL(url)
 }
 
-// Replace anything that's awkward in a filename — OS-reserved chars, spaces,
-// commas, etc. — with underscores; collapse runs of underscores. Keeps dots
-// out of segments so the .csv extension we append isn't ambiguous.
 function sanitizeFilename(s: string): string {
   return (s || 'untitled')
     .replace(/[\\/:*?"<>|,]+/g, '_')
@@ -102,6 +103,13 @@ function sanitizeFilename(s: string): string {
     .replace(/_+/g, '_')
     .replace(/^_|_$/g, '')
     || 'untitled'
+}
+
+function utilColor(pct: number) {
+  if (pct > 100) return '#ef4444'
+  if (pct >= 80) return '#34d399'
+  if (pct >= 50) return '#f59e0b'
+  return '#64748b'
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -118,10 +126,7 @@ export default function ReportsPage() {
   const [clients, setClients] = useState<ClientDetail[]>([])
   const [allProfiles, setAllProfiles] = useState<ProfileDetail[]>([])
 
-  // Client tab
   const [selectedClient, setSelectedClient] = useState('')
-
-  // Resource tab
   const [selectedDept, setSelectedDept] = useState('')
   const [selectedResource, setSelectedResource] = useState('')
   const [expandedResource, setExpandedResource] = useState<string | null>(null)
@@ -157,15 +162,12 @@ export default function ReportsPage() {
         allowedUserIds = [profile.id]
       }
 
-      // Fetch profiles for filter dropdowns
-      let profQ = supabase.from('profiles').select('id,full_name,department,manager_id').eq('is_active', true)
+      let profQ = supabase.from('profiles').select('id,full_name,department,manager_id,role').eq('is_active', true)
       if (allowedUserIds !== null) profQ = profQ.in('id', allowedUserIds)
       const { data: profData, error: profError } = await profQ
       if (profError) { setLoading(false); return }
-      const profArr = (profData || []) as ProfileDetail[]
-      setAllProfiles(profArr)
+      setAllProfiles((profData || []) as ProfileDetail[])
 
-      // Fetch time logs
       let logsQ = supabase.from('time_logs').select('id,hours,log_date,project_id,user_id,description,task_type_id')
         .gte('log_date', startStr).lte('log_date', endStr)
       if (allowedUserIds !== null) logsQ = logsQ.in('user_id', allowedUserIds)
@@ -182,18 +184,16 @@ export default function ReportsPage() {
 
       const [projRes, userRes] = await Promise.all([
         supabase.from('projects').select('id,name,client_id').in('id', projIds),
-        supabase.from('profiles').select('id,full_name,department,manager_id').in('id', userIds),
+        supabase.from('profiles').select('id,full_name,department,manager_id,role').in('id', userIds),
       ])
 
       const projArr = (projRes.data || []) as ProjectDetail[]
       const userArr = (userRes.data || []) as ProfileDetail[]
-
       const projMap: Record<string, ProjectDetail> = {}
       for (const p of projArr) projMap[p.id] = p
       const profMap: Record<string, ProfileDetail> = {}
       for (const p of userArr) profMap[p.id] = p
 
-      // Fetch task types
       const taskTypeMap: Record<string, TaskTypeDetail> = {}
       if (taskTypeIds.length) {
         const { data: ttData } = await supabase.from('task_types').select('id,name').in('id', taskTypeIds)
@@ -246,7 +246,6 @@ export default function ReportsPage() {
     selectedDept ? allProfiles.filter(p => p.department === selectedDept) : allProfiles
     , [allProfiles, selectedDept])
 
-  // Clients tab: group logs → client → project → resource
   const clientsData = useMemo(() => {
     const filtered = selectedClient ? logs.filter(l => l.clientId === selectedClient) : logs
     const map: Record<string, {
@@ -268,10 +267,6 @@ export default function ReportsPage() {
     return Object.values(map).sort((a, b) => a.clientName.localeCompare(b.clientName))
   }, [logs, selectedClient])
 
-  // Resource tab: group logs → resource → (client, project) pair.
-  // The "(client, project)" granularity is required because the table now
-  // has both Client and Project columns side-by-side at the bulk level.
-  // `allLogs` is preserved for the single-resource detail view.
   const resourceData = useMemo(() => {
     let filtered = logs
     if (selectedDept) filtered = filtered.filter(l => l.department === selectedDept)
@@ -279,9 +274,6 @@ export default function ReportsPage() {
 
     const map: Record<string, {
       userId: string; userName: string; department: string; managerId: string | null; totalHours: number;
-      // Keyed by `${clientId}::${projectId}` so the same client appearing
-      // under multiple projects produces multiple rows (matches the new
-      // table structure: Resource | Department | Client | Project | Time).
       clientProjects: Record<string, { clientId: string; clientName: string; projectId: string; projectName: string; hours: number }>
       allLogs: EnrichedLog[]
     }> = {}
@@ -298,11 +290,7 @@ export default function ReportsPage() {
       const cid = log.clientId || 'no-client'
       const key = `${cid}::${log.project_id}`
       if (!rm.clientProjects[key]) {
-        rm.clientProjects[key] = {
-          clientId: cid, clientName: log.clientName,
-          projectId: log.project_id, projectName: log.projectName,
-          hours: 0,
-        }
+        rm.clientProjects[key] = { clientId: cid, clientName: log.clientName, projectId: log.project_id, projectName: log.projectName, hours: 0 }
       }
       rm.clientProjects[key].hours += log.hours
       rm.allLogs.push(log)
@@ -310,20 +298,66 @@ export default function ReportsPage() {
     return Object.values(map).sort((a, b) => a.userName.localeCompare(b.userName))
   }, [logs, selectedDept, selectedResource])
 
-  // ─── Single-resource view derivation ─────────────────────────────────────
-  //
-  // A "single resource" view is active when the user has either picked a
-  // resource from the dropdown, OR clicked a row to drill into one resource.
-  // The two paths share rendering; this resolves which one (if any) is in
-  // play and grabs the matching ResourceData object.
+  // ─── Utilization (admin only) ─────────────────────────────────────────────
+
+  const utilizationData = useMemo(() => {
+    if (profile?.role !== 'admin') return null
+    const today = new Date()
+    const effectiveEnd = pEnd <= today ? pEnd : today
+    const weekdays = countWeekdays(pStart, effectiveEnd)
+    const basePerPerson = weekdays * 8
+
+    const employees = allProfiles.filter(p => p.role === 'employee')
+    const logMap: Record<string, number> = {}
+    for (const log of logs) logMap[log.user_id] = (logMap[log.user_id] || 0) + log.hours
+
+    const resources = employees.map(emp => ({
+      id: emp.id,
+      name: emp.full_name,
+      department: emp.department || 'Unassigned',
+      loggedHours: logMap[emp.id] || 0,
+      baseHours: basePerPerson,
+      utilization: basePerPerson > 0 ? Math.round(((logMap[emp.id] || 0) / basePerPerson) * 100) : 0,
+    }))
+
+    const deptMap: Record<string, typeof resources> = {}
+    for (const r of resources) {
+      if (!deptMap[r.department]) deptMap[r.department] = []
+      deptMap[r.department].push(r)
+    }
+
+    const deptList = Object.keys(deptMap).sort()
+    const deptColorMap: Record<string, string> = {}
+    deptList.forEach((d, i) => { deptColorMap[d] = DEPT_COLORS[i % DEPT_COLORS.length] })
+
+    const departmentRows = deptList.map(name => {
+      const res = [...deptMap[name]].sort((a, b) => b.utilization - a.utilization)
+      const totalLogged = res.reduce((s, r) => s + r.loggedHours, 0)
+      const totalBase = res.length * basePerPerson
+      return {
+        name, color: deptColorMap[name], resources: res,
+        totalLogged, totalBase,
+        avgUtilization: totalBase > 0 ? Math.round((totalLogged / totalBase) * 100) : 0,
+      }
+    })
+
+    const totalLogged = resources.reduce((s, r) => s + r.loggedHours, 0)
+    const totalBase = employees.length * basePerPerson
+    return {
+      departmentRows, totalLogged, totalBase,
+      overallUtilization: totalBase > 0 ? Math.round((totalLogged / totalBase) * 100) : 0,
+      weekdays, basePerPerson, employeeCount: employees.length,
+    }
+  }, [profile, allProfiles, logs, pStart, pEnd])
+
+  // ─── Single-resource view ─────────────────────────────────────────────────
+
   const singleResourceId = selectedResource || expandedResource || null
   const singleResource = useMemo(
     () => singleResourceId ? resourceData.find(r => r.userId === singleResourceId) ?? null : null,
     [singleResourceId, resourceData]
   )
 
-  // Manager's name for the single-resource header. Looked up directly from
-  // the profiles table by manager_id whenever the visible resource changes.
   const [singleResourceManagerName, setSingleResourceManagerName] = useState('—')
   useEffect(() => {
     if (!singleResource?.managerId) { setSingleResourceManagerName('—'); return }
@@ -338,6 +372,20 @@ export default function ReportsPage() {
   // ─── Export ───────────────────────────────────────────────────────────────
 
   const exportCSV = () => {
+    if (mainTab === 'utilization' && utilizationData) {
+      const rows: string[][] = []
+      for (const dept of utilizationData.departmentRows) {
+        for (const res of dept.resources) {
+          rows.push([res.name, dept.name, res.loggedHours.toFixed(1), String(res.baseHours), `${res.utilization}%`])
+        }
+        rows.push([`— ${dept.name} Total —`, '', dept.totalLogged.toFixed(1), String(dept.totalBase), `${dept.avgUtilization}%`])
+        rows.push(['', '', '', '', ''])
+      }
+      downloadCSV(`utilization_${startStr}_${endStr}.csv`, rows, ['Resource', 'Department', 'Logged (h)', 'Base (h)', 'Utilization'])
+      toast.success('CSV downloaded')
+      return
+    }
+
     if (mainTab === 'clients') {
       const rows: string[][] = []
       for (const client of clientsData) {
@@ -357,23 +405,11 @@ export default function ReportsPage() {
       return
     }
 
-    // ─── Resource tab ────────────────────────────────────────────────────
     if (singleResource) {
-      // Single-resource export: per-time-log rows.
-      // Filename: FullEmployeeName_Dept_Timeperiod.csv
-      // Columns:  Resource Name | Date | Client | Project | Task Type | Description | Time
       const rows: string[][] = []
       const sortedLogs = [...singleResource.allLogs].sort((a, b) => a.log_date.localeCompare(b.log_date))
       for (const log of sortedLogs) {
-        rows.push([
-          singleResource.userName,
-          format(new Date(log.log_date + 'T00:00:00'), 'yyyy-MM-dd'),
-          log.clientName,
-          log.projectName,
-          log.taskTypeName,
-          log.description || '',
-          log.hours.toFixed(1),
-        ])
+        rows.push([singleResource.userName, format(new Date(log.log_date + 'T00:00:00'), 'yyyy-MM-dd'), log.clientName, log.projectName, log.taskTypeName, log.description || '', log.hours.toFixed(1)])
       }
       const filename = `${sanitizeFilename(singleResource.userName)}_${sanitizeFilename(singleResource.department)}_${sanitizeFilename(pLabel)}.csv`
       downloadCSV(filename, rows, ['Resource Name', 'Date', 'Client', 'Project', 'Task Type', 'Description', 'Time (h)'])
@@ -381,27 +417,12 @@ export default function ReportsPage() {
       return
     }
 
-    // Bulk resource export (all resources): individual time-log rows,
-    // sorted first by person name, then by date, then by time logged.
-    // Columns: Resource Name | Date | Client | Project | Task Type | Description | Time
     const allLogs: EnrichedLog[] = []
-    for (const res of resourceData) {
-      allLogs.push(...res.allLogs)
-    }
-    allLogs.sort((a, b) =>
-      a.userName.localeCompare(b.userName) || a.log_date.localeCompare(b.log_date) || a.hours - b.hours
-    )
+    for (const res of resourceData) allLogs.push(...res.allLogs)
+    allLogs.sort((a, b) => a.userName.localeCompare(b.userName) || a.log_date.localeCompare(b.log_date) || a.hours - b.hours)
     const rows: string[][] = []
     for (const log of allLogs) {
-      rows.push([
-        log.userName,
-        format(new Date(log.log_date + 'T00:00:00'), 'yyyy-MM-dd'),
-        log.clientName,
-        log.projectName,
-        log.taskTypeName,
-        log.description || '',
-        log.hours.toFixed(1),
-      ])
+      rows.push([log.userName, format(new Date(log.log_date + 'T00:00:00'), 'yyyy-MM-dd'), log.clientName, log.projectName, log.taskTypeName, log.description || '', log.hours.toFixed(1)])
     }
     downloadCSV(`resource_report_${startStr}_${endStr}.csv`, rows, ['Resource Name', 'Date', 'Client', 'Project', 'Task Type', 'Description', 'Time (h)'])
     toast.success('CSV downloaded')
@@ -432,8 +453,15 @@ export default function ReportsPage() {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   }
 
+  const axisProps = {
+    tick: { fill: 'var(--chronos-text-muted)', fontSize: 11, fontFamily: 'DM Sans, sans-serif' },
+    axisLine: false as const,
+    tickLine: false as const,
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <div style={{ flex: 1 }}>
@@ -442,23 +470,22 @@ export default function ReportsPage() {
         </div>
         <button className="btn-primary" onClick={exportCSV} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <Download size={13} />
-          {mainTab === 'resource' && singleResource
-            ? `Export ${singleResource.userName.split(' ')[0]}`
-            : 'Export CSV'}
+          {mainTab === 'resource' && singleResource ? `Export ${singleResource.userName.split(' ')[0]}` : 'Export CSV'}
         </button>
       </div>
 
       {/* Controls bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-        {/* Main tabs */}
         <div style={{ display: 'flex', gap: '4px', background: 'var(--chronos-surface-2)', borderRadius: '10px', padding: '4px' }}>
           <button style={tabBtn('clients')} onClick={() => setMainTab('clients')}>Clients</button>
           <button style={tabBtn('resource')} onClick={() => setMainTab('resource')}>Resource</button>
+          {profile?.role === 'admin' && (
+            <button style={tabBtn('utilization')} onClick={() => setMainTab('utilization')}>Utilization</button>
+          )}
         </div>
 
         <div style={{ flex: 1 }} />
 
-        {/* Period tabs */}
         <div style={{ display: 'flex', gap: '6px' }}>
           {(['week', 'month', 'annual'] as PeriodTab[]).map(p => (
             <button key={p} style={periodBtn(p)} onClick={() => setPeriodTab(p)}>
@@ -467,12 +494,9 @@ export default function ReportsPage() {
           ))}
         </div>
 
-        {/* Nav */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <button style={navBtn} onClick={() => setNavOffset(n => n - 1)}><ChevronLeft size={14} /></button>
-          <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', minWidth: '120px', textAlign: 'center' }}>
-            {pLabel}
-          </span>
+          <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', minWidth: '120px', textAlign: 'center' }}>{pLabel}</span>
           <button style={navBtn} onClick={() => setNavOffset(n => n + 1)}><ChevronRight size={14} /></button>
           {navOffset !== 0 && (
             <button style={{ ...navBtn, fontSize: '11px', padding: '5px 10px' }} onClick={() => setNavOffset(0)}>Current</button>
@@ -485,10 +509,150 @@ export default function ReportsPage() {
         <div style={{ display: 'flex', justifyContent: 'center', padding: '80px' }}>
           <div style={{ width: '28px', height: '28px', border: '3px solid var(--chronos-border)', borderTopColor: ACCENT, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
         </div>
+
+      ) : mainTab === 'utilization' && profile?.role === 'admin' ? (
+        /* ─── Utilization Tab ─────────────────────────────────────────────── */
+        !utilizationData || utilizationData.employeeCount === 0 ? (
+          <div className="card-base" style={{ padding: '60px', textAlign: 'center', color: 'var(--chronos-text-muted)', fontSize: '14px' }}>
+            No employee data found for this period.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+            {/* Summary cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px' }}>
+              {([
+                { label: 'Total Logged Hours', value: `${utilizationData.totalLogged.toFixed(1)}h`, sub: `across ${utilizationData.employeeCount} employees` },
+                { label: 'Total Base Hours', value: `${utilizationData.totalBase}h`, sub: `${utilizationData.employeeCount} × ${utilizationData.basePerPerson}h` },
+                { label: 'Overall Utilization', value: `${utilizationData.overallUtilization}%`, sub: pLabel, accent: true },
+                { label: 'Working Days', value: String(utilizationData.weekdays), sub: '5 days/wk · 8h/day' },
+              ] as { label: string; value: string; sub: string; accent?: boolean }[]).map(({ label, value, sub, accent }) => (
+                <div key={label} className="card-base" style={{ padding: '16px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>{label}</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '22px', fontWeight: 800, color: accent ? ACCENT : 'var(--chronos-text)' }}>{value}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', marginTop: '4px' }}>{sub}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Department bar chart */}
+            <div className="card-base" style={{ padding: '20px' }}>
+              <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: '15px', fontWeight: 700 }}>Department Utilization</div>
+                  <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '3px' }}>
+                    {pLabel} · 8h/day Mon–Fri · 100% = {utilizationData.basePerPerson}h per person
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  {utilizationData.departmentRows.map(d => (
+                    <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <div style={{ width: '10px', height: '10px', borderRadius: '2px', background: d.color, flexShrink: 0 }} />
+                      <span style={{ fontSize: '11px', color: 'var(--chronos-text-muted)' }}>{d.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={utilizationData.departmentRows} barSize={56} barCategoryGap="30%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--chronos-border)" vertical={false} />
+                  <XAxis dataKey="name" {...axisProps} />
+                  <YAxis {...axisProps} tickFormatter={(v: number) => `${v}%`} domain={[0, 'auto']} />
+                  <ReferenceLine
+                    y={100}
+                    stroke="rgba(255,255,255,0.2)"
+                    strokeDasharray="5 4"
+                    label={{ value: '100%', position: 'insideTopRight', fill: 'var(--chronos-text-muted)', fontSize: 10, dy: -6 }}
+                  />
+                  <Tooltip
+                    contentStyle={{ background: 'var(--chronos-surface)', border: '1px solid var(--chronos-border)', borderRadius: '10px', fontFamily: 'DM Sans, sans-serif', fontSize: '12px' }}
+                    formatter={(value: number, _: string, props: any) => {
+                      const d = props.payload
+                      return [`${value}%  (${d.totalLogged.toFixed(1)}h / ${d.totalBase}h)`, 'Utilization']
+                    }}
+                  />
+                  <Bar dataKey="avgUtilization" radius={[6, 6, 0, 0]}>
+                    {utilizationData.departmentRows.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Resource table */}
+            <div className="card-base" style={{ overflow: 'hidden' }}>
+              <div style={{
+                display: 'grid', gridTemplateColumns: '2fr 1.5fr 110px 110px 110px 1fr',
+                padding: '8px 16px', background: 'var(--chronos-surface-2)',
+                borderBottom: '1px solid var(--chronos-border)',
+              }}>
+                {['Resource', 'Department', 'Logged', 'Base', 'Utilization', ''].map(col => (
+                  <span key={col} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{col}</span>
+                ))}
+              </div>
+
+              {utilizationData.departmentRows.map(dept => (
+                <div key={dept.name}>
+                  {/* Department header */}
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '2fr 1.5fr 110px 110px 110px 1fr',
+                    padding: '9px 16px', background: 'rgba(0,0,0,0.18)',
+                    borderBottom: '1px solid var(--chronos-border)', alignItems: 'center',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ width: '10px', height: '10px', borderRadius: '3px', background: dept.color, flexShrink: 0 }} />
+                      <span style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{dept.name}</span>
+                    </div>
+                    <span />
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{dept.totalLogged.toFixed(1)}h</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{dept.totalBase}h</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 800, color: dept.color }}>{dept.avgUtilization}%</span>
+                    <span />
+                  </div>
+
+                  {/* Resource rows — sorted by decreasing utilization */}
+                  {dept.resources.map(res => {
+                    const col = utilColor(res.utilization)
+                    return (
+                      <div key={res.id} style={{
+                        display: 'grid', gridTemplateColumns: '2fr 1.5fr 110px 110px 110px 1fr',
+                        padding: '10px 16px', borderBottom: '1px solid var(--chronos-border)', alignItems: 'center',
+                      }}>
+                        <span style={{ fontSize: '13px', fontWeight: 500 }}>{res.name}</span>
+                        <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{res.department}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>{res.loggedHours.toFixed(1)}h</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{res.baseHours}h</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: col }}>{res.utilization}%</span>
+                        <div style={{ paddingRight: '12px' }}>
+                          <div style={{ height: '6px', borderRadius: '3px', background: 'var(--chronos-surface-2)', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', borderRadius: '3px', width: `${Math.min(res.utilization, 100)}%`, background: col, transition: 'width 0.3s' }} />
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
+
+              {/* Grand total */}
+              <div style={{
+                display: 'grid', gridTemplateColumns: '2fr 1.5fr 110px 110px 110px 1fr',
+                padding: '12px 16px', alignItems: 'center',
+                background: 'rgba(167,139,250,0.12)', borderTop: '1px solid rgba(167,139,250,0.25)',
+              }}>
+                <span style={{ fontSize: '13px', fontWeight: 800, color: ACCENT }}>All Employees</span>
+                <span />
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 800, color: ACCENT }}>{utilizationData.totalLogged.toFixed(1)}h</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 800, color: ACCENT }}>{utilizationData.totalBase}h</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 800, color: ACCENT }}>{utilizationData.overallUtilization}%</span>
+                <span />
+              </div>
+            </div>
+          </div>
+        )
+
       ) : mainTab === 'clients' ? (
         /* ─── Clients Tab ─────────────────────────────────────────────────── */
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {/* Filter */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <label style={{ fontSize: '13px', color: 'var(--chronos-text-muted)', flexShrink: 0 }}>Client:</label>
             <select className="input-base" style={{ maxWidth: '280px' }} value={selectedClient}
@@ -507,44 +671,24 @@ export default function ReportsPage() {
               const clientTotal = Object.values(client.projects).reduce((s, p) =>
                 s + Object.values(p.resources).reduce((ss, r) => ss + r.hours, 0), 0)
               const sortedProjects = Object.values(client.projects).sort((a, b) => a.projectName.localeCompare(b.projectName))
-
               return (
                 <div key={client.clientId} className="card-base" style={{ overflow: 'hidden' }}>
-                  {/* Client header */}
-                  <div style={{
-                    padding: '12px 16px', background: 'var(--chronos-surface-2)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    borderBottom: '1px solid var(--chronos-border)',
-                  }}>
+                  <div style={{ padding: '12px 16px', background: 'var(--chronos-surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--chronos-border)' }}>
                     <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '15px' }}>{client.clientName}</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 800, color: ACCENT }}>
-                      {h(clientTotal)} total
-                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 800, color: ACCENT }}>{h(clientTotal)} total</span>
                   </div>
-
-                  {/* Column headers */}
-                  <div style={{
-                    display: 'grid', gridTemplateColumns: '2fr 2fr 1.5fr 1.5fr 100px',
-                    padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)',
-                    background: 'rgba(0,0,0,0.12)',
-                  }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1.5fr 1.5fr 100px', padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)', background: 'rgba(0,0,0,0.12)' }}>
                     {['Client', 'Project', 'Department', 'Resource', 'Time'].map(col => (
                       <span key={col} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{col}</span>
                     ))}
                   </div>
-
                   {sortedProjects.map(project => {
                     const projectTotal = Object.values(project.resources).reduce((s, r) => s + r.hours, 0)
                     const sortedResources = Object.values(project.resources).sort((a, b) => a.userName.localeCompare(b.userName))
-
                     return (
                       <div key={project.projectId}>
                         {sortedResources.map((res, ri) => (
-                          <div key={res.userId} style={{
-                            display: 'grid', gridTemplateColumns: '2fr 2fr 1.5fr 1.5fr 100px',
-                            padding: '10px 16px', borderBottom: '1px solid var(--chronos-border)',
-                            alignItems: 'center',
-                          }}>
+                          <div key={res.userId} style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1.5fr 1.5fr 100px', padding: '10px 16px', borderBottom: '1px solid var(--chronos-border)', alignItems: 'center' }}>
                             <span style={{ fontSize: '13px', color: ri === 0 ? 'var(--chronos-text)' : 'var(--chronos-text-muted)' }}>{ri === 0 ? client.clientName : ''}</span>
                             <span style={{ fontSize: '13px', color: ri === 0 ? 'var(--chronos-text)' : 'var(--chronos-text-muted)' }}>{ri === 0 ? project.projectName : ''}</span>
                             <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{res.department}</span>
@@ -552,12 +696,7 @@ export default function ReportsPage() {
                             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: ACCENT }}>{h(res.hours)}</span>
                           </div>
                         ))}
-                        {/* Project total */}
-                        <div style={{
-                          display: 'grid', gridTemplateColumns: '2fr 2fr 1.5fr 1.5fr 100px',
-                          padding: '7px 16px', borderBottom: '1px solid var(--chronos-border)',
-                          alignItems: 'center', background: 'rgba(167,139,250,0.06)',
-                        }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1.5fr 1.5fr 100px', padding: '7px 16px', borderBottom: '1px solid var(--chronos-border)', alignItems: 'center', background: 'rgba(167,139,250,0.06)' }}>
                           <span /><span style={{ fontSize: '11px', fontWeight: 700, color: ACCENT }}>{project.projectName} Total</span>
                           <span /><span />
                           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 800, color: ACCENT }}>{h(projectTotal)}</span>
@@ -565,13 +704,7 @@ export default function ReportsPage() {
                       </div>
                     )
                   })}
-
-                  {/* Client total */}
-                  <div style={{
-                    display: 'grid', gridTemplateColumns: '2fr 2fr 1.5fr 1.5fr 100px',
-                    padding: '10px 16px', alignItems: 'center',
-                    background: 'rgba(167,139,250,0.12)', borderTop: '1px solid rgba(167,139,250,0.25)',
-                  }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1.5fr 1.5fr 100px', padding: '10px 16px', alignItems: 'center', background: 'rgba(167,139,250,0.12)', borderTop: '1px solid rgba(167,139,250,0.25)' }}>
                     <span style={{ fontSize: '12px', fontWeight: 800, color: ACCENT }}>{client.clientName} Total</span>
                     <span /><span /><span />
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 800, color: ACCENT }}>{h(clientTotal)}</span>
@@ -581,10 +714,10 @@ export default function ReportsPage() {
             })
           )}
         </div>
+
       ) : (
         /* ─── Resource Tab ────────────────────────────────────────────────── */
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {/* Filters */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <label style={{ fontSize: '13px', color: 'var(--chronos-text-muted)', flexShrink: 0 }}>Department:</label>
@@ -609,95 +742,44 @@ export default function ReportsPage() {
               No time logs found for this period.
             </div>
           ) : singleResource ? (
-            /* ─── Single-resource detail view ─────────────────────────────
-             * Active when a resource is picked from the dropdown OR when
-             * the user clicks a row in the bulk table. Shows a header with
-             * Employee Name | Department | Manager, then a per-time-log
-             * table (Date | Note | Client | Project | Time).
-             */
             (() => {
               const sortedLogs = [...singleResource.allLogs].sort((a, b) => a.log_date.localeCompare(b.log_date))
               const employeeHeaderGrid = '2fr 1.5fr 2fr'
               const logGrid = `${SINGLE_DATE_COL} ${SINGLE_NOTE_COL} ${SINGLE_CLIENT_COL} ${SINGLE_PROJECT_COL} ${SINGLE_TIME_COL}`
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {/* Back link — only meaningful when the user got here by
-                      clicking a row, but it's harmless when they used the
-                      dropdown (clears both pieces of state). */}
-                  <button
-                    onClick={() => { setExpandedResource(null); setSelectedResource('') }}
-                    style={{
-                      alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: '6px',
-                      background: 'transparent', border: '1px solid var(--chronos-border)',
-                      borderRadius: '6px', padding: '5px 10px', cursor: 'pointer',
-                      fontSize: '12px', color: 'var(--chronos-text-muted)',
-                    }}
-                  >
+                  <button onClick={() => { setExpandedResource(null); setSelectedResource('') }}
+                    style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: '6px', background: 'transparent', border: '1px solid var(--chronos-border)', borderRadius: '6px', padding: '5px 10px', cursor: 'pointer', fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
                     <ChevronLeft size={13} /> Back to all resources
                   </button>
-
                   <div className="card-base" style={{ overflow: 'hidden' }}>
-                    {/* Employee header — column labels */}
-                    <div style={{
-                      display: 'grid', gridTemplateColumns: employeeHeaderGrid,
-                      padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)',
-                      background: 'var(--chronos-surface-2)',
-                    }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: employeeHeaderGrid, padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)', background: 'var(--chronos-surface-2)' }}>
                       {['Employee Name', 'Department', 'Manager'].map(col => (
                         <span key={col} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{col}</span>
                       ))}
                     </div>
-                    {/* Employee header — values */}
-                    <div style={{
-                      display: 'grid', gridTemplateColumns: employeeHeaderGrid,
-                      padding: '12px 16px', borderBottom: '1px solid var(--chronos-border)',
-                      alignItems: 'center', background: 'rgba(167,139,250,0.06)',
-                    }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: employeeHeaderGrid, padding: '12px 16px', borderBottom: '1px solid var(--chronos-border)', alignItems: 'center', background: 'rgba(167,139,250,0.06)' }}>
                       <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '15px' }}>{singleResource.userName}</span>
                       <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{singleResource.department}</span>
                       <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{singleResourceManagerName}</span>
                     </div>
-
-                    {/* Time-log column headers */}
-                    <div style={{
-                      display: 'grid', gridTemplateColumns: logGrid,
-                      padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)',
-                      background: 'rgba(0,0,0,0.12)',
-                    }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: logGrid, padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)', background: 'rgba(0,0,0,0.12)' }}>
                       {['Date', 'Note', 'Client', 'Project', 'Time'].map(col => (
                         <span key={col} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{col}</span>
                       ))}
                     </div>
-
-                    {/* Time-log rows */}
                     {sortedLogs.length === 0 ? (
-                      <div style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--chronos-text-muted)', fontSize: '13px' }}>
-                        No time logs in this period.
-                      </div>
+                      <div style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--chronos-text-muted)', fontSize: '13px' }}>No time logs in this period.</div>
                     ) : sortedLogs.map(log => (
-                      <div key={log.id} style={{
-                        display: 'grid', gridTemplateColumns: logGrid,
-                        padding: '9px 16px', borderBottom: '1px solid var(--chronos-border)',
-                        alignItems: 'center',
-                      }}>
-                        <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
-                          {format(new Date(log.log_date + 'T00:00:00'), 'EEE, MMM d')}
-                        </span>
-                        <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
-                          {log.description || '—'}
-                        </span>
+                      <div key={log.id} style={{ display: 'grid', gridTemplateColumns: logGrid, padding: '9px 16px', borderBottom: '1px solid var(--chronos-border)', alignItems: 'center' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{format(new Date(log.log_date + 'T00:00:00'), 'EEE, MMM d')}</span>
+                        <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{log.description || '—'}</span>
                         <span style={{ fontSize: '13px' }}>{log.clientName}</span>
                         <span style={{ fontSize: '13px' }}>{log.projectName}</span>
                         <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: ACCENT }}>{h(log.hours)}</span>
                       </div>
                     ))}
-
-                    {/* Resource total */}
-                    <div style={{
-                      display: 'grid', gridTemplateColumns: logGrid,
-                      padding: '10px 16px', alignItems: 'center',
-                      background: 'rgba(167,139,250,0.12)', borderTop: '1px solid rgba(167,139,250,0.25)',
-                    }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: logGrid, padding: '10px 16px', alignItems: 'center', background: 'rgba(167,139,250,0.12)', borderTop: '1px solid rgba(167,139,250,0.25)' }}>
                       <span style={{ fontSize: '12px', fontWeight: 800, color: ACCENT }}>Total</span>
                       <span /><span /><span />
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 800, color: ACCENT }}>{h(singleResource.totalHours)}</span>
@@ -707,9 +789,6 @@ export default function ReportsPage() {
               )
             })()
           ) : (() => {
-            // ─── Bulk view (no single resource selected) ────────────────
-            // Group by department; one row per (resource × client × project).
-            // Clicking any row opens the single-resource detail view above.
             const byDept: Record<string, typeof resourceData> = {}
             for (const res of resourceData) {
               if (!byDept[res.department]) byDept[res.department] = []
@@ -717,69 +796,34 @@ export default function ReportsPage() {
             }
             const deptEntries = Object.entries(byDept).sort(([a], [b]) => a.localeCompare(b))
             const showDeptHeaders = deptEntries.length > 1
-
             return (
               <div className="card-base" style={{ overflow: 'hidden' }}>
-                {/* Column headers */}
-                <div style={{
-                  display: 'grid', gridTemplateColumns: BULK_GRID,
-                  padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)',
-                  background: 'var(--chronos-surface-2)',
-                }}>
+                <div style={{ display: 'grid', gridTemplateColumns: BULK_GRID, padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)', background: 'var(--chronos-surface-2)' }}>
                   {['Resource', 'Department', 'Client', 'Project', 'Time'].map(col => (
                     <span key={col} style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{col}</span>
                   ))}
                 </div>
-
                 {deptEntries.map(([dept, resources]) => {
                   const deptTotal = resources.reduce((s, r) => s + r.totalHours, 0)
-
                   return (
                     <div key={dept}>
                       {showDeptHeaders && (
-                        <div style={{
-                          padding: '8px 16px', background: 'rgba(0,0,0,0.2)',
-                          borderBottom: '1px solid var(--chronos-border)',
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        }}>
+                        <div style={{ padding: '8px 16px', background: 'rgba(0,0,0,0.2)', borderBottom: '1px solid var(--chronos-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{dept}</span>
                           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--chronos-text-muted)' }}>{h(deptTotal)}</span>
                         </div>
                       )}
-
                       {resources.map(res => {
-                        const sortedCP = Object.values(res.clientProjects).sort((a, b) =>
-                          a.clientName.localeCompare(b.clientName) || a.projectName.localeCompare(b.projectName)
-                        )
-
+                        const sortedCP = Object.values(res.clientProjects).sort((a, b) => a.clientName.localeCompare(b.clientName) || a.projectName.localeCompare(b.projectName))
                         return (
                           <div key={res.userId}>
-                            {/* Summary rows: one per (client, project) pair.
-                                Resource name + Department appear only on the
-                                first row of the group; subsequent rows leave
-                                them blank for visual grouping. */}
                             {sortedCP.map((cp, ri) => (
-                              <div
-                                key={`${cp.clientId}::${cp.projectId}`}
-                                onClick={() => setExpandedResource(res.userId)}
-                                style={{
-                                  display: 'grid', gridTemplateColumns: BULK_GRID,
-                                  padding: '10px 16px', borderBottom: '1px solid var(--chronos-border)',
-                                  alignItems: 'center', cursor: 'pointer',
-                                  transition: 'background 0.1s',
-                                }}
+                              <div key={`${cp.clientId}::${cp.projectId}`} onClick={() => setExpandedResource(res.userId)}
+                                style={{ display: 'grid', gridTemplateColumns: BULK_GRID, padding: '10px 16px', borderBottom: '1px solid var(--chronos-border)', alignItems: 'center', cursor: 'pointer', transition: 'background 0.1s' }}
                                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--chronos-surface-2)'}
-                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
-                              >
+                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  {ri === 0 && (
-                                    <>
-                                      <span style={{ color: 'var(--chronos-text-muted)', flexShrink: 0, display: 'flex' }}>
-                                        <ChevronRightIcon size={13} />
-                                      </span>
-                                      <span style={{ fontWeight: 600, fontSize: '13px' }}>{res.userName}</span>
-                                    </>
-                                  )}
+                                  {ri === 0 && (<><span style={{ color: 'var(--chronos-text-muted)', flexShrink: 0, display: 'flex' }}><ChevronRightIcon size={13} /></span><span style={{ fontWeight: 600, fontSize: '13px' }}>{res.userName}</span></>)}
                                 </div>
                                 <span style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{ri === 0 ? res.department : ''}</span>
                                 <span style={{ fontSize: '13px' }}>{cp.clientName}</span>
@@ -787,13 +831,7 @@ export default function ReportsPage() {
                                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: ACCENT }}>{h(cp.hours)}</span>
                               </div>
                             ))}
-
-                            {/* Resource total */}
-                            <div style={{
-                              display: 'grid', gridTemplateColumns: BULK_GRID,
-                              padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)',
-                              alignItems: 'center', background: 'rgba(167,139,250,0.08)',
-                            }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: BULK_GRID, padding: '8px 16px', borderBottom: '1px solid var(--chronos-border)', alignItems: 'center', background: 'rgba(167,139,250,0.08)' }}>
                               <span style={{ fontSize: '11px', fontWeight: 700, color: ACCENT }}>{res.userName} Total</span>
                               <span /><span /><span />
                               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 800, color: ACCENT }}>{h(res.totalHours)}</span>
@@ -801,14 +839,8 @@ export default function ReportsPage() {
                           </div>
                         )
                       })}
-
-                      {/* Dept total (only when showing multiple depts) */}
                       {showDeptHeaders && (
-                        <div style={{
-                          display: 'grid', gridTemplateColumns: BULK_GRID,
-                          padding: '10px 16px', borderBottom: '1px solid var(--chronos-border)',
-                          alignItems: 'center', background: 'rgba(96,165,250,0.08)',
-                        }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: BULK_GRID, padding: '10px 16px', borderBottom: '1px solid var(--chronos-border)', alignItems: 'center', background: 'rgba(96,165,250,0.08)' }}>
                           <span style={{ fontSize: '12px', fontWeight: 800, color: '#60a5fa' }}>{dept} Department Total</span>
                           <span /><span /><span />
                           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 800, color: '#60a5fa' }}>{h(deptTotal)}</span>
