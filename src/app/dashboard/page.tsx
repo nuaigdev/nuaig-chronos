@@ -67,6 +67,7 @@ interface TeamStats {
   barKeys: BarKey[]
   chartSubtitle: string
   utilizationData: UtilizationEntry[]
+  capacityLabel: string
   timesheetStatus: { status: string; count: number }[]
   members: TeamMember[]
   deptColorMap: Record<string, string>
@@ -182,16 +183,20 @@ export default function DashboardPage() {
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
       const monthStartStr = formatDate(monthStart, 'yyyy-MM-dd')
 
-      // Weekdays elapsed in current week (Mon–today), used for utilization capacity
+      // Weekdays elapsed in current week (Mon=1×8h, Tue=2×8h, … Fri=5×8h)
       const weekdaysElapsed = [0, 1, 2, 3, 4].filter(i => {
         const d = new Date(weekStart)
         d.setDate(d.getDate() + i)
         return d <= now
       }).length
       const capacityHours = Math.max(weekdaysElapsed * 8, 1)
+      const capacityLabel = weekdaysElapsed >= 5
+        ? '40h (full week)'
+        : `${capacityHours}h so far this week`
 
       // Fetch team members — managers see their dept only, admins see all
-      let membersQuery = supabase.from('profiles').select('id, full_name, department, role').eq('is_active', true)
+      // Employees only: managers and admins are excluded from utilization tracking
+      let membersQuery = supabase.from('profiles').select('id, full_name, department, role').eq('is_active', true).eq('role', 'employee')
       if (profile.role === 'manager') membersQuery = membersQuery.eq('manager_id', profile.id)
 
       const { data: membersRaw } = await membersQuery
@@ -205,7 +210,7 @@ export default function DashboardPage() {
         setTeamStats({
           avgUtilization: 0, teamMembersCount: 0, activeMembersCount: 0, teamPendingApprovals: 0,
           dailyHours: [], barKeys: [], chartSubtitle: '',
-          utilizationData: [], timesheetStatus: [], members: [], deptColorMap: {}, legendKeys: [],
+          utilizationData: [], capacityLabel, timesheetStatus: [], members: [], deptColorMap: {}, legendKeys: [],
         })
         return
       }
@@ -312,7 +317,7 @@ export default function DashboardPage() {
       setTeamStats({
         avgUtilization, teamMembersCount: members.length, activeMembersCount, teamPendingApprovals,
         dailyHours, barKeys, chartSubtitle,
-        utilizationData, timesheetStatus, members, deptColorMap, legendKeys,
+        utilizationData, capacityLabel, timesheetStatus, members, deptColorMap, legendKeys,
       })
     } finally {
       setTeamLoading(false)
@@ -568,7 +573,7 @@ export default function DashboardPage() {
 
               {/* Over / under utilization */}
               <div className="card-base" style={{ padding: isMobile ? '16px' : '20px' }}>
-                <SectionHeader title="Resource Utilization" subtitle={`This week • ${teamStats.utilizationData[0]?.capacityHours ?? 0}h capacity per person`} />
+                <SectionHeader title="Resource Utilization" subtitle={`Employees only • ${teamStats.capacityLabel} capacity`} />
                 {(() => {
                   const sorted = [...teamStats.utilizationData].sort((a, b) => b.utilization - a.utilization)
                   const topIds = new Set(sorted.slice(0, 3).map(u => u.id))
