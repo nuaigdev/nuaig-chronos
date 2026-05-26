@@ -734,12 +734,12 @@ export default function ApprovalsPage() {
                                       const project = (log.project as { name: string; client?: { name: string } } | undefined)
                                       const taskType = (log.task_type as { name: string } | undefined)
                                       return (
-                                        <div key={log.id} className="table-row" style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr 1fr 1fr 60px', gap: '0', padding: '10px 20px', borderBottom: '1px solid var(--chronos-border)', alignItems: 'center' }}>
+                                        <div key={log.id} className="table-row" style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr 1fr 1fr 60px', gap: '0', padding: '10px 20px', borderBottom: '1px solid var(--chronos-border)', alignItems: 'start' }}>
                                           <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }} />
                                           <div style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{project?.client?.name || '—'}</div>
                                           <div style={{ fontSize: '13px', color: 'var(--chronos-text)', fontWeight: 500 }}>{project?.name || '—'}</div>
                                           <div style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>{taskType?.name || '—'}</div>
-                                          <div style={{ fontSize: '12px', color: 'var(--chronos-text-subtle)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{log.description || '—'}</div>
+                                          <div style={{ fontSize: '12px', color: 'var(--chronos-text-subtle)', wordBreak: 'break-word', whiteSpace: 'normal', lineHeight: '1.4' }}>{log.description || '—'}</div>
                                           <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '13px', fontWeight: 600 }}>{log.hours}h</div>
                                         </div>
                                       )

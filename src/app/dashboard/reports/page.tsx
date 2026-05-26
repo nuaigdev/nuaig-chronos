@@ -57,12 +57,14 @@ interface ProfileDetail { id: string; full_name: string; department: string; man
 function h(v: number) { return `${v.toFixed(1)}h` }
 function sumH(ls: EnrichedLog[]) { return ls.reduce((s, l) => s + l.hours, 0) }
 
-function countWeekdays(start: Date, end: Date): number {
+function countWeekdays(start: Date, end: Date, holidayDates: string[] = []): number {
+  const holidaySet = new Set(holidayDates)
   let count = 0
   const cur = new Date(start)
   while (cur <= end) {
     const dow = cur.getDay()
-    if (dow !== 0 && dow !== 6) count++
+    const dateStr = format(cur, 'yyyy-MM-dd')
+    if (dow !== 0 && dow !== 6 && !holidaySet.has(dateStr)) count++
     cur.setDate(cur.getDate() + 1)
   }
   return count
@@ -125,6 +127,7 @@ export default function ReportsPage() {
   const [logs, setLogs] = useState<EnrichedLog[]>([])
   const [clients, setClients] = useState<ClientDetail[]>([])
   const [allProfiles, setAllProfiles] = useState<ProfileDetail[]>([])
+  const [mandatoryHolidays, setMandatoryHolidays] = useState<string[]>([])
 
   const [selectedClient, setSelectedClient] = useState('')
   const [selectedDept, setSelectedDept] = useState('')
@@ -167,6 +170,16 @@ export default function ReportsPage() {
       const { data: profData, error: profError } = await profQ
       if (profError) { setLoading(false); return }
       setAllProfiles((profData || []) as ProfileDetail[])
+
+      // Fetch mandatory holidays in this period
+      const { data: holidayData } = await supabase
+        .from('holidays')
+        .select('date')
+        .eq('is_optional', false)
+        .gte('date', startStr)
+        .lte('date', endStr)
+      const holidayDates = (holidayData || []).map((h: { date: string }) => h.date)
+      setMandatoryHolidays(holidayDates)
 
       let logsQ = supabase.from('time_logs').select('id,hours,log_date,project_id,user_id,description,task_type_id')
         .gte('log_date', startStr).lte('log_date', endStr)
@@ -304,7 +317,7 @@ export default function ReportsPage() {
     if (profile?.role !== 'admin') return null
     const today = new Date()
     const effectiveEnd = pEnd <= today ? pEnd : today
-    const weekdays = countWeekdays(pStart, effectiveEnd)
+    const weekdays = countWeekdays(pStart, effectiveEnd, mandatoryHolidays)
     const basePerPerson = weekdays * 8
 
     const employees = allProfiles.filter(p => p.role === 'employee')
@@ -343,12 +356,13 @@ export default function ReportsPage() {
 
     const totalLogged = resources.reduce((s, r) => s + r.loggedHours, 0)
     const totalBase = employees.length * basePerPerson
+    const holidayCount = mandatoryHolidays.length
     return {
       departmentRows, totalLogged, totalBase,
       overallUtilization: totalBase > 0 ? Math.round((totalLogged / totalBase) * 100) : 0,
-      weekdays, basePerPerson, employeeCount: employees.length,
+      weekdays, basePerPerson, employeeCount: employees.length, holidayCount,
     }
-  }, [profile, allProfiles, logs, pStart, pEnd])
+  }, [profile, allProfiles, logs, pStart, pEnd, mandatoryHolidays])
 
   // ─── Single-resource view ─────────────────────────────────────────────────
 
@@ -525,7 +539,7 @@ export default function ReportsPage() {
                 { label: 'Total Logged Hours', value: `${utilizationData.totalLogged.toFixed(1)}h`, sub: `across ${utilizationData.employeeCount} employees` },
                 { label: 'Total Base Hours', value: `${utilizationData.totalBase}h`, sub: `${utilizationData.employeeCount} × ${utilizationData.basePerPerson}h` },
                 { label: 'Overall Utilization', value: `${utilizationData.overallUtilization}%`, sub: pLabel, accent: true },
-                { label: 'Working Days', value: String(utilizationData.weekdays), sub: '5 days/wk · 8h/day' },
+                { label: 'Working Days', value: String(utilizationData.weekdays), sub: utilizationData.holidayCount > 0 ? `excl. ${utilizationData.holidayCount} holiday${utilizationData.holidayCount > 1 ? 's' : ''} · 8h/day` : '5 days/wk · 8h/day' },
               ] as { label: string; value: string; sub: string; accent?: boolean }[]).map(({ label, value, sub, accent }) => (
                 <div key={label} className="card-base" style={{ padding: '16px' }}>
                   <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--chronos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>{label}</div>
@@ -541,7 +555,7 @@ export default function ReportsPage() {
                 <div>
                   <div style={{ fontFamily: 'var(--font-display)', fontSize: '15px', fontWeight: 700 }}>Department Utilization</div>
                   <div style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '3px' }}>
-                    {pLabel} · 8h/day Mon–Fri · 100% = {utilizationData.basePerPerson}h per person
+                    {pLabel} · 8h/day Mon–Fri{utilizationData.holidayCount > 0 ? ` · ${utilizationData.holidayCount} mandatory holiday${utilizationData.holidayCount > 1 ? 's' : ''} excluded` : ''} · 100% = {utilizationData.basePerPerson}h per person
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>

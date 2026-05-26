@@ -80,6 +80,7 @@ export default function TimesheetsPage() {
   const [timeLogs, setTimeLogs] = useState<TimeLogFull[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [taskTypes, setTaskTypes] = useState<TaskType[]>([])
+  const [holidays, setHolidays] = useState<Record<string, string>>({}) // date → holiday name
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [checkingMissed, setCheckingMissed] = useState(false)
@@ -139,11 +140,24 @@ export default function TimesheetsPage() {
     setTaskTypes((data || []) as unknown as TaskType[])
   }, [profile?.department])
 
+  const fetchHolidays = useCallback(async () => {
+    const { data } = await supabase
+      .from('holidays')
+      .select('date, name')
+      .eq('is_optional', false)
+      .gte('date', weekStartStr)
+      .lte('date', weekEndStr)
+    const map: Record<string, string> = {}
+    for (const h of (data || [])) map[h.date] = h.name
+    setHolidays(map)
+  }, [weekStartStr, weekEndStr])
+
   useEffect(() => {
     if (authLoading || !profile) return
     fetchTimesheet()
     fetchTimeLogs()
-  }, [authLoading, profile?.id, fetchTimesheet, fetchTimeLogs])
+    fetchHolidays()
+  }, [authLoading, profile?.id, fetchTimesheet, fetchTimeLogs, fetchHolidays])
 
   useEffect(() => {
     if (authLoading || !profile) return
@@ -513,6 +527,9 @@ export default function TimesheetsPage() {
             const dayHours = dayLogs.reduce((s, l) => s + l.hours, 0)
             const isFuture = isFutureDate(day)
             const isToday = isSameDay(day, new Date())
+            const dayOfWeek = day.getDay()
+            const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
+            const holidayName = holidays[dayStr]
 
             return (
               <div
@@ -528,16 +545,36 @@ export default function TimesheetsPage() {
                 <div style={{
                   padding: '10px 16px',
                   display: 'flex', alignItems: 'center', gap: '12px',
-                  background: 'var(--chronos-surface-2)',
+                  background: isWeekend ? 'rgba(99,102,241,0.04)' : holidayName ? 'rgba(52,211,153,0.04)' : 'var(--chronos-surface-2)',
                   borderBottom: dayLogs.length > 0 ? '1px solid var(--chronos-border)' : undefined,
                 }}>
-                  <div style={{ flex: 1 }}>
-                    <span style={{ fontWeight: 700, fontSize: '13px', fontFamily: 'var(--font-display)', color: isToday ? 'var(--chronos-accent)' : 'var(--chronos-text)' }}>
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ fontWeight: 700, fontSize: '13px', fontFamily: 'var(--font-display)', color: isToday ? 'var(--chronos-accent)' : isWeekend ? 'var(--chronos-text-muted)' : 'var(--chronos-text)' }}>
                       {format(day, 'EEEE')}
                     </span>
-                    <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginLeft: '8px' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
                       {format(day, 'MMM d')}
                     </span>
+                    {isWeekend && (
+                      <span style={{
+                        fontSize: '10px', fontWeight: 600, letterSpacing: '0.04em',
+                        padding: '2px 7px', borderRadius: '100px',
+                        background: 'rgba(99,102,241,0.12)', color: 'var(--chronos-accent)',
+                        border: '1px solid rgba(99,102,241,0.2)',
+                      }}>
+                        Weekly Off
+                      </span>
+                    )}
+                    {holidayName && (
+                      <span style={{
+                        fontSize: '10px', fontWeight: 600, letterSpacing: '0.04em',
+                        padding: '2px 7px', borderRadius: '100px',
+                        background: 'rgba(52,211,153,0.12)', color: 'var(--chronos-success)',
+                        border: '1px solid rgba(52,211,153,0.25)',
+                      }}>
+                        🎉 {holidayName}
+                      </span>
+                    )}
                   </div>
                   {dayHours > 0 && (
                     <span style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--chronos-accent)' }}>
