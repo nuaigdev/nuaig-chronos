@@ -202,6 +202,10 @@ export default function TimesheetsPage() {
   const openCreate = (date: Date) => {
     if (!isCurrentOrPastWeek) { toast.error("Can't log time for future weeks"); return }
     if (isFutureDate(date)) { toast.error("Can't log time for a future date"); return }
+    const dow = date.getDay()
+    if (dow === 0 || dow === 6) { toast.error("Can't log time on weekly off days"); return }
+    const dateStr = format(date, 'yyyy-MM-dd')
+    if (holidays[dateStr]) { toast.error(`Can't log time on ${holidays[dateStr]} (Holiday)`); return }
     if (timesheet && !timesheetEditable(timesheet.status)) {
       toast.error(
         timesheet.status === 'approved'
@@ -216,6 +220,10 @@ export default function TimesheetsPage() {
   }
 
   const openEdit = (log: TimeLogFull) => {
+    const logDate = new Date(log.log_date + 'T00:00:00')
+    const dow = logDate.getDay()
+    if (dow === 0 || dow === 6) { toast.error("Can't edit logs on weekly off days"); return }
+    if (holidays[log.log_date]) { toast.error(`Can't edit logs on ${holidays[log.log_date]} (Holiday)`); return }
     if (timesheet && !timesheetEditable(timesheet.status)) {
       toast.error(
         timesheet.status === 'approved'
@@ -254,6 +262,9 @@ export default function TimesheetsPage() {
     // Validate date within week
     const logDate = new Date(form.log_date + 'T00:00:00')
     if (isFutureDate(logDate)) { toast.error("Can't log time for a future date"); return }
+    const dow = logDate.getDay()
+    if (dow === 0 || dow === 6) { toast.error("Can't log time on weekly off days"); return }
+    if (holidays[form.log_date]) { toast.error(`Can't log time on ${holidays[form.log_date]} (Holiday)`); return }
 
     setSaving(true)
     try {
@@ -530,6 +541,7 @@ export default function TimesheetsPage() {
             const dayOfWeek = day.getDay()
             const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
             const holidayName = holidays[dayStr]
+            const isBlocked = isWeekend || !!holidayName
 
             return (
               <div
@@ -537,7 +549,7 @@ export default function TimesheetsPage() {
                 className="card-base"
                 style={{
                   overflow: 'hidden',
-                  opacity: isFuture ? 0.45 : 1,
+                  opacity: isFuture ? 0.45 : isBlocked ? 0.7 : 1,
                   border: isToday ? '1px solid var(--chronos-accent)' : undefined,
                 }}
               >
@@ -581,7 +593,7 @@ export default function TimesheetsPage() {
                       {formatHours(dayHours)}
                     </span>
                   )}
-                  {canEdit && !isFuture && (
+                  {canEdit && !isFuture && !isBlocked && (
                     <button
                       className="btn-secondary"
                       style={{ padding: '4px 10px', fontSize: '12px' }}
@@ -616,7 +628,7 @@ export default function TimesheetsPage() {
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: 'var(--chronos-text)', flexShrink: 0 }}>
                       {log.hours}h
                     </div>
-                    {canEdit && (
+                    {canEdit && !isBlocked && (
                       <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                         <button
                           onClick={() => openEdit(log)}
