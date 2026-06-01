@@ -421,7 +421,18 @@ export default function ReportsPage() {
 
   const exportXLSX = async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { default: writeXlsxFile } = await import('write-excel-file/browser') as any
+    const { default: writeXlsxFile } = await import('write-excel-file') as any
+
+    const saveBlob = (blob: Blob, fileName: string) => {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    }
 
     // ── Utilization ──────────────────────────────────────────────────────────
     if (mainTab === 'utilization' && utilizationData) {
@@ -435,7 +446,8 @@ export default function ReportsPage() {
         rows.push([xlEmpty(), xlEmpty(), xlEmpty(), xlEmpty(), xlEmpty()])
       }
       rows.push([xlSub3('All Employees'), xlSub3(''), xlSub3(utilizationData.totalLogged, true), xlSub3(utilizationData.totalBase, true), xlSub3(`${utilizationData.overallUtilization}%`)])
-      await writeXlsxFile(rows, { columns: [22, 20, 14, 14, 14].map(w => ({ width: w })), fileName: `utilization_${startStr}_${endStr}.xlsx` })
+      const blob = await writeXlsxFile(rows, { columns: [22, 20, 14, 14, 14].map(w => ({ width: w })) })
+      saveBlob(blob, `utilization_${startStr}_${endStr}.xlsx`)
       toast.success('Excel downloaded')
       return
     }
@@ -457,7 +469,8 @@ export default function ReportsPage() {
         rows.push([xlSub2(client.clientName + ' Total'), xlSub2(''), xlSub2(''), xlSub2(''), xlSub2(clientTotal, true)])
         rows.push([xlEmpty(), xlEmpty(), xlEmpty(), xlEmpty(), xlEmpty()])
       }
-      await writeXlsxFile(rows, { columns: [26, 32, 20, 24, 12].map(w => ({ width: w })), fileName: `clients_report_${startStr}_${endStr}.xlsx` })
+      const blob = await writeXlsxFile(rows, { columns: [26, 32, 20, 24, 12].map(w => ({ width: w })) })
+      saveBlob(blob, `clients_report_${startStr}_${endStr}.xlsx`)
       toast.success('Excel downloaded')
       return
     }
@@ -483,7 +496,8 @@ export default function ReportsPage() {
       }
       rows.push([xlSub2('Total'), xlSub2(''), xlSub2(''), xlSub2(''), xlSub2(''), xlSub2(''), xlSub2(singleResource.totalHours, true)])
       const filename = `${sanitizeFilename(singleResource.userName)}_${sanitizeFilename(singleResource.department)}_${sanitizeFilename(pLabel)}.xlsx`
-      await writeXlsxFile(rows, { columns: resCols, fileName: filename })
+      const blob = await writeXlsxFile(rows, { columns: resCols })
+      saveBlob(blob, filename)
       toast.success('Excel downloaded')
       return
     }
@@ -506,7 +520,8 @@ export default function ReportsPage() {
       }
       rows.push([xlSub1(res.userName + ' Total'), xlSub1(''), xlSub1(''), xlSub1(''), xlSub1(''), xlSub1(''), xlSub1(res.totalHours, true)])
     }
-    await writeXlsxFile(rows, { columns: resCols, fileName: `resource_report_${startStr}_${endStr}.xlsx` })
+    const blob = await writeXlsxFile(rows, { columns: resCols })
+    saveBlob(blob, `resource_report_${startStr}_${endStr}.xlsx`)
     toast.success('Excel downloaded')
   }
 
