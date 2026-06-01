@@ -421,7 +421,7 @@ export default function ReportsPage() {
 
   const exportXLSX = async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { default: writeXlsxFile } = await import('write-excel-file') as any
+    const { default: writeXlsxFile } = await import('write-excel-file/browser') as any
 
     const saveBlob = (blob: Blob, fileName: string) => {
       const url = URL.createObjectURL(blob)

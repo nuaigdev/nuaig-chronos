@@ -6,7 +6,8 @@
       "Bash(node -e \"const fs=require\\('fs'\\); const src=fs.readFileSync\\('src/app/dashboard/reports/page.tsx','utf8'\\); const idx=src.indexOf\\('new Blob'\\); const snippet=src.slice\\(idx,idx+80\\); console.log\\(JSON.stringify\\(snippet\\)\\)\")",
       "Bash(npm install *)",
       "Bash(node *)",
-      "Bash(Select-String -Pattern \"xlsx|excel|write\")"
+      "Bash(Select-String -Pattern \"xlsx|excel|write\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\('exports', {}\\), indent=2\\)\\)\")"
     ]
   }
 }
