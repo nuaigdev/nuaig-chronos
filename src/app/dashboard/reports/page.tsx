@@ -105,7 +105,7 @@ function sanitizeFilename(s: string): string {
 type XC = Record<string, any>
 
 function xlHdr(text: string): XC {
-  return { value: text, fontWeight: 'bold', color: '#FFFFFF', backgroundColor: '#4C1D95', height: 26 }
+  return { value: text, fontWeight: 'bold', color: '#FFFFFF', backgroundColor: '#6D28D9', height: 26 }
 }
 function xlStr(v: string | null | undefined): XC {
   return { value: v || '', alignVertical: 'top' }
@@ -472,13 +472,13 @@ export default function ReportsPage() {
       for (const log of sorted) {
         const rh = xlRowH(log.description)
         rows.push([
-          { ...xlStr(singleResource.userName), height: rh },
-          xlDate(log.log_date),
-          xlStr(log.clientName),
-          xlStr(log.projectName),
-          xlStr(log.taskTypeName),
+          { ...xlStr(singleResource.userName), height: rh, wrap: true },
+          { ...xlDate(log.log_date), wrap: true },
+          { ...xlStr(log.clientName), wrap: true },
+          { ...xlStr(log.projectName), wrap: true },
+          { ...xlStr(log.taskTypeName), wrap: true },
           xlWrap(log.description),
-          xlNum(log.hours),
+          { ...xlNum(log.hours), wrap: true },
         ])
       }
       rows.push([xlSub2('Total'), xlSub2(''), xlSub2(''), xlSub2(''), xlSub2(''), xlSub2(''), xlSub2(singleResource.totalHours, true)])
@@ -495,13 +495,13 @@ export default function ReportsPage() {
       for (const log of sorted) {
         const rh = xlRowH(log.description)
         rows.push([
-          { ...xlStr(res.userName), height: rh },
-          xlDate(log.log_date),
-          xlStr(log.clientName),
-          xlStr(log.projectName),
-          xlStr(log.taskTypeName),
+          { ...xlStr(res.userName), height: rh, wrap: true },
+          { ...xlDate(log.log_date), wrap: true },
+          { ...xlStr(log.clientName), wrap: true },
+          { ...xlStr(log.projectName), wrap: true },
+          { ...xlStr(log.taskTypeName), wrap: true },
           xlWrap(log.description),
-          xlNum(log.hours),
+          { ...xlNum(log.hours), wrap: true },
         ])
       }
       rows.push([xlSub1(res.userName + ' Total'), xlSub1(''), xlSub1(''), xlSub1(''), xlSub1(''), xlSub1(''), xlSub1(res.totalHours, true)])
