@@ -90,14 +90,6 @@ function getPeriodRange(tab: PeriodTab, nav: number): { start: Date; end: Date; 
   return { start, end, label: `Year ${format(start, 'yyyy')}` }
 }
 
-function downloadCSV(filename: string, rows: string[][], headers: string[]) {
-  const lines = [headers.join(','), ...rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))]
-  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = filename; a.click()
-  URL.revokeObjectURL(url)
-}
-
 function sanitizeFilename(s: string): string {
   return (s || 'untitled')
     .replace(/[\\/:*?"<>|,]+/g, '_')
@@ -105,6 +97,48 @@ function sanitizeFilename(s: string): string {
     .replace(/_+/g, '_')
     .replace(/^_|_$/g, '')
     || 'untitled'
+}
+
+// ─── Excel helpers ────────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type XC = Record<string, any>
+
+function xlHdr(text: string): XC {
+  return { value: text, fontWeight: 'bold', color: '#FFFFFF', backgroundColor: '#4C1D95', height: 26 }
+}
+function xlStr(v: string | null | undefined): XC {
+  return { value: v || '', alignVertical: 'top' }
+}
+function xlNum(v: number, fmt = '0.0'): XC {
+  return { value: v, type: Number, format: fmt, align: 'right', alignVertical: 'top' }
+}
+function xlDate(s: string): XC {
+  return { value: new Date(s + 'T00:00:00'), type: Date, format: 'ddd, mmm d yyyy', alignVertical: 'top' }
+}
+function xlWrap(v: string | null | undefined): XC {
+  return { value: v || '—', wrap: true, alignVertical: 'top' }
+}
+function xlEmpty(bg?: string): XC {
+  return bg ? { value: '', backgroundColor: bg } : { value: '' }
+}
+function xlRowH(text: string | null | undefined): number {
+  if (!text) return 18
+  let totalLines = 0
+  for (const l of text.split('\n')) totalLines += Math.max(1, Math.ceil(l.length / 42))
+  return Math.min(Math.max(totalLines * 15, 18), 150)
+}
+function xlSub1(v: string | number, isN = false): XC {
+  return { value: v, ...(isN ? { type: Number, format: '0.0', align: 'right' } : {}), fontWeight: 'bold', backgroundColor: '#EDE9FE', height: 20 }
+}
+function xlSub2(v: string | number, isN = false): XC {
+  return { value: v, ...(isN ? { type: Number, format: '0.0', align: 'right' } : {}), fontWeight: 'bold', backgroundColor: '#DDD6FE', height: 22 }
+}
+function xlSub3(v: string | number, isN = false): XC {
+  return { value: v, ...(isN ? { type: Number, format: '0.0', align: 'right' } : {}), fontWeight: 'bold', backgroundColor: '#C4B5FD', height: 24 }
+}
+function xlDept(text: string): XC {
+  return { value: text, fontWeight: 'bold', backgroundColor: '#F5F3FF', height: 20 }
 }
 
 function utilColor(pct: number) {
@@ -385,61 +419,95 @@ export default function ReportsPage() {
 
   // ─── Export ───────────────────────────────────────────────────────────────
 
-  const exportCSV = () => {
+  const exportXLSX = async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { default: writeXlsxFile } = await import('write-excel-file/browser') as any
+
+    // ── Utilization ──────────────────────────────────────────────────────────
     if (mainTab === 'utilization' && utilizationData) {
-      const rows: string[][] = []
+      const rows: XC[][] = [['Resource', 'Department', 'Logged (h)', 'Base (h)', 'Utilization'].map(xlHdr)]
       for (const dept of utilizationData.departmentRows) {
+        rows.push([xlDept(dept.name), xlEmpty('#F5F3FF'), xlEmpty('#F5F3FF'), xlEmpty('#F5F3FF'), xlEmpty('#F5F3FF')])
         for (const res of dept.resources) {
-          rows.push([res.name, dept.name, res.loggedHours.toFixed(1), String(res.baseHours), `${res.utilization}%`])
+          rows.push([xlStr(res.name), xlStr(res.department), xlNum(res.loggedHours), xlNum(res.baseHours, '0'), xlStr(`${res.utilization}%`)])
         }
-        rows.push([`— ${dept.name} Total —`, '', dept.totalLogged.toFixed(1), String(dept.totalBase), `${dept.avgUtilization}%`])
-        rows.push(['', '', '', '', ''])
+        rows.push([xlSub1(dept.name + ' Total'), xlSub1(''), xlSub1(dept.totalLogged, true), xlSub1(dept.totalBase, true), xlSub1(`${dept.avgUtilization}%`)])
+        rows.push([xlEmpty(), xlEmpty(), xlEmpty(), xlEmpty(), xlEmpty()])
       }
-      downloadCSV(`utilization_${startStr}_${endStr}.csv`, rows, ['Resource', 'Department', 'Logged (h)', 'Base (h)', 'Utilization'])
-      toast.success('CSV downloaded')
+      rows.push([xlSub3('All Employees'), xlSub3(''), xlSub3(utilizationData.totalLogged, true), xlSub3(utilizationData.totalBase, true), xlSub3(`${utilizationData.overallUtilization}%`)])
+      await writeXlsxFile(rows, { columns: [22, 20, 14, 14, 14].map(w => ({ width: w })), fileName: `utilization_${startStr}_${endStr}.xlsx` })
+      toast.success('Excel downloaded')
       return
     }
 
+    // ── Clients ──────────────────────────────────────────────────────────────
     if (mainTab === 'clients') {
-      const rows: string[][] = []
+      const rows: XC[][] = [['Client', 'Project', 'Department', 'Resource', 'Time (h)'].map(xlHdr)]
       for (const client of clientsData) {
         const clientTotal = Object.values(client.projects).reduce((s, p) => s + Object.values(p.resources).reduce((ss, r) => ss + r.hours, 0), 0)
-        for (const project of Object.values(client.projects).sort((a, b) => a.projectName.localeCompare(b.projectName))) {
+        const sortedProjects = Object.values(client.projects).sort((a, b) => a.projectName.localeCompare(b.projectName))
+        for (const project of sortedProjects) {
           const projectTotal = Object.values(project.resources).reduce((s, r) => s + r.hours, 0)
-          for (const res of Object.values(project.resources).sort((a, b) => a.userName.localeCompare(b.userName))) {
-            rows.push([client.clientName, project.projectName, res.department, res.userName, res.hours.toFixed(1)])
+          const sortedResources = Object.values(project.resources).sort((a, b) => a.userName.localeCompare(b.userName))
+          for (const res of sortedResources) {
+            rows.push([xlStr(client.clientName), xlStr(project.projectName), xlStr(res.department), xlStr(res.userName), xlNum(res.hours)])
           }
-          rows.push([client.clientName, project.projectName, '', 'PROJECT TOTAL', projectTotal.toFixed(1)])
+          rows.push([xlSub1(client.clientName), xlSub1(project.projectName + ' Total'), xlSub1(''), xlSub1(''), xlSub1(projectTotal, true)])
         }
-        rows.push([client.clientName, '', '', 'CLIENT TOTAL', clientTotal.toFixed(1)])
-        rows.push(['', '', '', '', ''])
+        rows.push([xlSub2(client.clientName + ' Total'), xlSub2(''), xlSub2(''), xlSub2(''), xlSub2(clientTotal, true)])
+        rows.push([xlEmpty(), xlEmpty(), xlEmpty(), xlEmpty(), xlEmpty()])
       }
-      downloadCSV(`clients_report_${startStr}_${endStr}.csv`, rows, ['Client', 'Project', 'Department', 'Resource', 'Time (h)'])
-      toast.success('CSV downloaded')
+      await writeXlsxFile(rows, { columns: [26, 32, 20, 24, 12].map(w => ({ width: w })), fileName: `clients_report_${startStr}_${endStr}.xlsx` })
+      toast.success('Excel downloaded')
       return
     }
+
+    // ── Resource (single or all) ──────────────────────────────────────────────
+    const resCols = [22, 16, 22, 28, 20, 46, 10].map(w => ({ width: w }))
+    const resHdr = ['Resource Name', 'Date', 'Client', 'Project', 'Task Type', 'Description', 'Time (h)'].map(xlHdr)
 
     if (singleResource) {
-      const rows: string[][] = []
-      const sortedLogs = [...singleResource.allLogs].sort((a, b) => a.log_date.localeCompare(b.log_date))
-      for (const log of sortedLogs) {
-        rows.push([singleResource.userName, format(new Date(log.log_date + 'T00:00:00'), 'yyyy-MM-dd'), log.clientName, log.projectName, log.taskTypeName, log.description || '', log.hours.toFixed(1)])
+      const rows: XC[][] = [resHdr]
+      const sorted = [...singleResource.allLogs].sort((a, b) => a.log_date.localeCompare(b.log_date))
+      for (const log of sorted) {
+        const rh = xlRowH(log.description)
+        rows.push([
+          { ...xlStr(singleResource.userName), height: rh },
+          xlDate(log.log_date),
+          xlStr(log.clientName),
+          xlStr(log.projectName),
+          xlStr(log.taskTypeName),
+          xlWrap(log.description),
+          xlNum(log.hours),
+        ])
       }
-      const filename = `${sanitizeFilename(singleResource.userName)}_${sanitizeFilename(singleResource.department)}_${sanitizeFilename(pLabel)}.csv`
-      downloadCSV(filename, rows, ['Resource Name', 'Date', 'Client', 'Project', 'Task Type', 'Description', 'Time (h)'])
-      toast.success('CSV downloaded')
+      rows.push([xlSub2('Total'), xlSub2(''), xlSub2(''), xlSub2(''), xlSub2(''), xlSub2(''), xlSub2(singleResource.totalHours, true)])
+      const filename = `${sanitizeFilename(singleResource.userName)}_${sanitizeFilename(singleResource.department)}_${sanitizeFilename(pLabel)}.xlsx`
+      await writeXlsxFile(rows, { columns: resCols, fileName: filename })
+      toast.success('Excel downloaded')
       return
     }
 
-    const allLogs: EnrichedLog[] = []
-    for (const res of resourceData) allLogs.push(...res.allLogs)
-    allLogs.sort((a, b) => a.userName.localeCompare(b.userName) || a.log_date.localeCompare(b.log_date) || a.hours - b.hours)
-    const rows: string[][] = []
-    for (const log of allLogs) {
-      rows.push([log.userName, format(new Date(log.log_date + 'T00:00:00'), 'yyyy-MM-dd'), log.clientName, log.projectName, log.taskTypeName, log.description || '', log.hours.toFixed(1)])
+    // All resources
+    const rows: XC[][] = [resHdr]
+    for (const res of resourceData) {
+      const sorted = [...res.allLogs].sort((a, b) => a.log_date.localeCompare(b.log_date))
+      for (const log of sorted) {
+        const rh = xlRowH(log.description)
+        rows.push([
+          { ...xlStr(res.userName), height: rh },
+          xlDate(log.log_date),
+          xlStr(log.clientName),
+          xlStr(log.projectName),
+          xlStr(log.taskTypeName),
+          xlWrap(log.description),
+          xlNum(log.hours),
+        ])
+      }
+      rows.push([xlSub1(res.userName + ' Total'), xlSub1(''), xlSub1(''), xlSub1(''), xlSub1(''), xlSub1(''), xlSub1(res.totalHours, true)])
     }
-    downloadCSV(`resource_report_${startStr}_${endStr}.csv`, rows, ['Resource Name', 'Date', 'Client', 'Project', 'Task Type', 'Description', 'Time (h)'])
-    toast.success('CSV downloaded')
+    await writeXlsxFile(rows, { columns: resCols, fileName: `resource_report_${startStr}_${endStr}.xlsx` })
+    toast.success('Excel downloaded')
   }
 
   // ─── Styles ───────────────────────────────────────────────────────────────
@@ -482,9 +550,9 @@ export default function ReportsPage() {
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '22px', fontWeight: 800, letterSpacing: '-0.03em' }}>Reports</h1>
           <p style={{ color: 'var(--chronos-text-muted)', fontSize: '13px', marginTop: '2px' }}>{pLabel}</p>
         </div>
-        <button className="btn-primary" onClick={exportCSV} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <button className="btn-primary" onClick={exportXLSX} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <Download size={13} />
-          {mainTab === 'resource' && singleResource ? `Export ${singleResource.userName.split(' ')[0]}` : 'Export CSV'}
+          {mainTab === 'resource' && singleResource ? `Export ${singleResource.userName.split(' ')[0]}` : 'Export'}
         </button>
       </div>
 
