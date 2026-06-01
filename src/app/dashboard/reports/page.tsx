@@ -114,7 +114,7 @@ function xlNum(v: number, fmt = '0.0'): XC {
   return { value: v, type: Number, format: fmt, align: 'right', alignVertical: 'top' }
 }
 function xlDate(s: string): XC {
-  return { value: new Date(s + 'T00:00:00'), type: Date, format: 'ddd, mmm d yyyy', alignVertical: 'top' }
+  return { value: new Date(s + 'T00:00:00Z'), type: Date, format: 'ddd, mmm d yyyy', alignVertical: 'top' }
 }
 function xlWrap(v: string | null | undefined): XC {
   return { value: v || '—', wrap: true, alignVertical: 'top' }
