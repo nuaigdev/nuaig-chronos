@@ -69,7 +69,13 @@ Two design decisions that are easy to get wrong:
 1. **`work_items` has no `department` column, on purpose.** Projects span departments, so an item has no single owning department. The team board is derived from the departments of the item's *assignees*. The consequence is that an item with **zero assignees appears on no team board** — the board header surfaces an "Unassigned" count so those don't silently vanish.
 2. **Team scope is fetched in two steps** (`useWorkItems`), not one filtered join. A single `work_item_assignees!inner(...)` filtered by `user_id` would return only the *matching* assignees on each card, so an item shared across two departments would render a half-empty avatar list. Resolve the item IDs first, then fetch those items with their full assignee list.
 
-Managers get company-wide write access, matching the existing `projects`/`clients` policies (which are company-scoped, not department-scoped). Employees may create items only inside projects they belong to, and only while the `board_employee_can_create` setting allows it. Assignees can always move their own cards between lanes.
+**Access (migration 020).** Admins and managers see every department's board and may assign anyone — reaching across teams is deliberately *their* act. Employees are confined to their own department: the department picker is locked to it, and the assignee picker only lists their own teammates. This is enforced in RLS, not just the UI — `work_items` SELECT lets an employee see only items their department is on, items in projects they belong to, or items they raised themselves.
+
+Project scope stays cross-department on purpose (projects span departments by design, so hiding co-workers there would defeat the point); an employee still only reaches projects they're a member of. Note `work_item_assignees` SELECT stays company-wide **deliberately** — a card must render its full avatar row from whichever board it's viewed on. Visibility is gated on the work item, not on the assignee rows.
+
+Employees may create items only inside projects they belong to, and only while `board_employee_can_create` allows it. Assignees can always move their own cards between lanes.
+
+RLS helpers are all `SECURITY DEFINER` on purpose: the `work_item_assignees` policy reads `work_items` and vice versa, so a plain `EXISTS` subquery between them would recurse.
 
 Board settings live in `admin_settings` (Settings → Work Board): `board_employee_can_create`, `board_show_priority`, `board_archive_done_days` (hides Done items older than N days; 0 = never, nothing is deleted).
 

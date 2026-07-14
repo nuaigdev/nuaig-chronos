@@ -102,11 +102,18 @@ export default function WorkBoardPage() {
   }, [profile, canManage])
 
   // Land people on a sensible board: their own department, or the first one.
+  // Employees are pinned to their own department and cannot leave it.
   useEffect(() => {
     if (department || departments.length === 0 || !profile) return
     const own = departments.find(d => d.name === profile.department)
+    if (!canManage) {
+      // No fallback to departments[0] here — dropping an employee onto some
+      // other team's board is exactly what this restriction exists to prevent.
+      if (own) setDepartment(own.name)
+      return
+    }
     setDepartment(own?.name || departments[0].name)
-  }, [departments, profile, department])
+  }, [departments, profile, department, canManage])
 
   const scope: BoardScope = useMemo(
     () => (scopeType === 'project'
@@ -207,10 +214,22 @@ export default function WorkBoardPage() {
     )
   }
 
-  const deptOptions = [
-    ...(isAdmin ? [{ value: ALL_DEPARTMENTS, label: 'All Departments' }] : []),
-    ...departments.map(d => ({ value: d.name, label: d.display_name || d.name })),
-  ]
+  // Managers and admins roam every department. Employees see only their own,
+  // so the picker collapses to a single locked option.
+  const deptOptions = canManage
+    ? [
+        { value: ALL_DEPARTMENTS, label: 'All Departments' },
+        ...departments.map(d => ({ value: d.name, label: d.display_name || d.name })),
+      ]
+    : departments
+        .filter(d => d.name === profile?.department)
+        .map(d => ({ value: d.name, label: d.display_name || d.name }))
+
+  // Employees may only pull in their own teammates. Reaching across teams is a
+  // manager/admin act, enforced in RLS as well as here (migration 020).
+  const assignablePeople = canManage
+    ? people
+    : people.filter(p => p.department && p.department === profile?.department)
 
   const renderItems = (list: WorkItem[]) =>
     view === 'board' ? (
@@ -302,6 +321,7 @@ export default function WorkBoardPage() {
               value={department}
               onChange={v => { setDepartment(v); setSelectedIds([]) }}
               options={deptOptions}
+              disabled={!canManage}
               placeholder="Select a department"
             />
           ) : (
@@ -425,7 +445,15 @@ export default function WorkBoardPage() {
       )}
 
       {/* Content */}
-      {!scopeReady ? (
+      {scopeType === 'team' && !canManage && !profile?.department ? (
+        // Dead end: an employee with no department has no team board to land on,
+        // and cannot pick another one. Say so rather than showing an empty picker.
+        <EmptyState
+          icon={<Users size={22} />}
+          title="You're not in a department yet"
+          description="Ask an admin to add you to one, and your team's board will show up here. In the meantime you can still use the Project view."
+        />
+      ) : !scopeReady ? (
         <EmptyState
           icon={<KanbanSquare size={22} />}
           title={scopeType === 'team' ? 'Pick a department' : 'Pick a project'}
@@ -506,7 +534,7 @@ export default function WorkBoardPage() {
         onClose={() => { setModalOpen(false); setEditing(null) }}
         editing={editing}
         projects={projects}
-        people={people}
+        people={assignablePeople}
         showPriority={settings.showPriority}
         lockedProjectId={scopeType === 'project' && !editing ? projectId : undefined}
         onCreate={createWorkItem}

@@ -126,6 +126,14 @@ export default function WorkItemModal({
     )
   })
 
+  // An employee's picker only lists their own department, so a teammate a
+  // manager pulled in from elsewhere isn't in `people`. They stay assigned
+  // (the save diffs against the current list rather than replacing it), but
+  // an unexplained "Assignees (3)" over a list of 2 would just look broken.
+  const hiddenAssigneeCount = assigneeIds.filter(
+    id => !people.some(p => p.id === id)
+  ).length
+
   return (
     <Modal
       isOpen={isOpen}
@@ -304,6 +312,14 @@ export default function WorkItemModal({
               )}
             </div>
           </div>
+
+          {hiddenAssigneeCount > 0 && (
+            <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '2px' }}>
+              {hiddenAssigneeCount} {hiddenAssigneeCount === 1 ? 'person' : 'people'} from another
+              department {hiddenAssigneeCount === 1 ? 'is' : 'are'} also on this item and will stay
+              assigned. Only a manager or admin can change that.
+            </p>
+          )}
         </FormField>
 
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '4px' }}>

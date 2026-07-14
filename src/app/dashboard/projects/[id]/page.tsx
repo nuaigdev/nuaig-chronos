@@ -132,6 +132,13 @@ export default function ProjectDetailPage() {
 
   const canCreate = canManageProjects || (settings.employeeCanCreate && isMemberOfProject)
 
+  // Employees may only assign their own departmental teammates, even on a
+  // cross-department project. Pulling in another team is a manager/admin act.
+  // Also enforced in RLS — migration 020.
+  const assignablePeople = canManageProjects
+    ? people
+    : people.filter(p => p.department && p.department === profile?.department)
+
   const handleDeleteItem = async (itemId: string) => {
     if (!confirm('Delete this work item? This cannot be undone.')) return
     await deleteWorkItem(itemId)
@@ -337,7 +344,7 @@ export default function ProjectDetailPage() {
         onClose={() => { setModalOpen(false); setEditing(null) }}
         editing={editing}
         projects={project ? [project] : []}
-        people={people}
+        people={assignablePeople}
         showPriority={settings.showPriority}
         lockedProjectId={id}
         onCreate={createWorkItem}
