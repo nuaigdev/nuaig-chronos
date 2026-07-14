@@ -94,15 +94,6 @@ export default function WorkItemCard({
           }}>
             {item.title}
           </div>
-          {item.description && (
-            <div style={{
-              fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '4px',
-              lineHeight: 1.5,
-              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-            }}>
-              {item.description}
-            </div>
-          )}
         </div>
 
         <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
