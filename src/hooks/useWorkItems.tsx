@@ -23,13 +23,16 @@ export interface CreateWorkItemInput {
   assignee_ids: string[]
 }
 
+// work_item_assignees has TWO foreign keys to profiles (user_id and
+// assigned_by), so a bare `profiles(...)` embed is ambiguous and PostgREST
+// rejects the entire query with PGRST201. The FK must be named explicitly.
 const SELECT_WITH_JOINS = `
   *,
   project:projects(id, name, client_id, client:clients(id, name)),
   creator:profiles!work_items_created_by_fkey(id, full_name),
   assignees:work_item_assignees(
     id, work_item_id, user_id, assigned_at,
-    user:profiles(id, full_name, department, role)
+    user:profiles!work_item_assignees_user_id_fkey(id, full_name, department, role)
   )
 `
 
