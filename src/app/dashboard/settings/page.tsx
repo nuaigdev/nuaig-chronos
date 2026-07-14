@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useProfile } from '@/hooks/useProfile'
 import { Holiday } from '@/types'
 import { FormField, Modal, EmptyState } from '@/components/ui'
-import { Settings, Plus, Trash2, Calendar, Clock } from 'lucide-react'
+import { Settings, Plus, Trash2, Calendar, Clock, KanbanSquare } from 'lucide-react'
 import { formatDate } from '@/utils'
 import toast from 'react-hot-toast'
 
@@ -18,9 +18,15 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [showHolidayModal, setShowHolidayModal] = useState(false)
   const [holidayForm, setHolidayForm] = useState({ name: '', date: '', is_optional: false })
-  const [activeTab, setActiveTab] = useState<'general' | 'holidays'>('general')
+  const [activeTab, setActiveTab] = useState<'general' | 'holidays' | 'board'>('general')
 
-  useEffect(() => { fetchSettings(); fetchHolidays() }, [])
+  // Work Board settings
+  const [boardEmployeeCanCreate, setBoardEmployeeCanCreate] = useState(true)
+  const [boardShowPriority, setBoardShowPriority] = useState(true)
+  const [boardArchiveDays, setBoardArchiveDays] = useState(30)
+  const [savingBoard, setSavingBoard] = useState(false)
+
+  useEffect(() => { fetchSettings(); fetchHolidays(); fetchBoardSettings() }, [])
 
   const fetchSettings = async () => {
     // RLS automatically scopes to the user's company via company_id
@@ -30,6 +36,50 @@ export default function SettingsPage() {
       .eq('key', 'working_hours_per_day')
       .single()
     if (data) setWorkingHours((data.value as { value: number }).value)
+  }
+
+  const fetchBoardSettings = async () => {
+    const { data } = await supabase
+      .from('admin_settings')
+      .select('key, value')
+      .in('key', ['board_employee_can_create', 'board_show_priority', 'board_archive_done_days'])
+
+    const rows = (data || []) as { key: string; value: { value: unknown } }[]
+    const get = <T,>(key: string, fallback: T): T => {
+      const row = rows.find(r => r.key === key)
+      return row ? (row.value.value as T) : fallback
+    }
+
+    setBoardEmployeeCanCreate(get('board_employee_can_create', true))
+    setBoardShowPriority(get('board_show_priority', true))
+    setBoardArchiveDays(get('board_archive_done_days', 30))
+  }
+
+  const saveBoardSettings = async () => {
+    if (!profile) return
+    setSavingBoard(true)
+
+    const updates: [string, unknown][] = [
+      ['board_employee_can_create', boardEmployeeCanCreate],
+      ['board_show_priority', boardShowPriority],
+      ['board_archive_done_days', boardArchiveDays],
+    ]
+
+    // upsert, not update: a company created before migration 019 ran its
+    // seed would have no row to update, and the write would silently no-op.
+    const { error } = await supabase.from('admin_settings').upsert(
+      updates.map(([key, value]) => ({
+        key,
+        value: { value },
+        company_id: profile.company_id,
+        updated_by: profile.id,
+      })),
+      { onConflict: 'company_id,key' },
+    )
+
+    setSavingBoard(false)
+    if (error) { toast.error('Could not save board settings'); return }
+    toast.success('Work Board settings saved!')
   }
 
   const fetchHolidays = async () => {
@@ -90,7 +140,11 @@ export default function SettingsPage() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid var(--chronos-border)' }}>
-        {[{ key: 'general', label: 'General', icon: <Settings size={14} /> }, { key: 'holidays', label: 'Holiday Calendar', icon: <Calendar size={14} /> }].map(t => (
+        {[
+          { key: 'general', label: 'General', icon: <Settings size={14} /> },
+          { key: 'holidays', label: 'Holiday Calendar', icon: <Calendar size={14} /> },
+          { key: 'board', label: 'Work Board', icon: <KanbanSquare size={14} /> },
+        ].map(t => (
           <button key={t.key} onClick={() => setActiveTab(t.key as typeof activeTab)} style={{
             display: 'flex', alignItems: 'center', gap: '6px',
             padding: '10px 16px', border: 'none', cursor: 'pointer', background: 'transparent',
@@ -188,6 +242,80 @@ export default function SettingsPage() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {activeTab === 'board' && (
+        <div className="card-base" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div>
+            <h3 style={{ fontFamily: 'Syne, sans-serif', fontSize: '15px', fontWeight: 700, marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <KanbanSquare size={16} style={{ color: 'var(--chronos-accent)' }} />
+              Work Board
+            </h3>
+            <p style={{ fontSize: '13px', color: 'var(--chronos-text-muted)' }}>
+              Controls how the Work Board behaves for everyone in {company?.name ?? 'your organisation'}.
+            </p>
+          </div>
+
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={boardEmployeeCanCreate}
+              onChange={e => setBoardEmployeeCanCreate(e.target.checked)}
+              style={{ accentColor: 'var(--chronos-accent)', width: '16px', height: '16px', marginTop: '2px' }}
+            />
+            <span>
+              <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--chronos-text)', display: 'block' }}>
+                Employees can create work items
+              </span>
+              <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
+                Only inside projects they are a member of. Admins and managers can always create work items anywhere.
+              </span>
+            </span>
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={boardShowPriority}
+              onChange={e => setBoardShowPriority(e.target.checked)}
+              style={{ accentColor: 'var(--chronos-accent)', width: '16px', height: '16px', marginTop: '2px' }}
+            />
+            <span>
+              <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--chronos-text)', display: 'block' }}>
+                Show priority
+              </span>
+              <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
+                Adds a low / medium / high marker to every card. Turn this off for a simpler board.
+              </span>
+            </span>
+          </label>
+
+          <div style={{ borderTop: '1px solid var(--chronos-border)', paddingTop: '16px' }}>
+            <FormField label="Archive Done items after">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <input
+                  type="range" min={0} max={180} step={5}
+                  value={boardArchiveDays}
+                  onChange={e => setBoardArchiveDays(Number(e.target.value))}
+                  style={{ flex: 1, accentColor: 'var(--chronos-accent)' }}
+                />
+                <div style={{ width: '90px', textAlign: 'center', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '16px', color: 'var(--chronos-accent)' }}>
+                  {boardArchiveDays === 0 ? 'Never' : `${boardArchiveDays} days`}
+                </div>
+              </div>
+            </FormField>
+            <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '8px' }}>
+              Completed work drops off the board after this long, so the Done lane stays readable.
+              The items are only hidden — nothing is deleted. Set to Never to keep everything on the board.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button className="btn-primary" onClick={saveBoardSettings} disabled={savingBoard}>
+              {savingBoard ? 'Saving...' : 'Save Settings'}
+            </button>
+          </div>
         </div>
       )}
 

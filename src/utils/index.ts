@@ -38,8 +38,40 @@ export function getStatusColor(status: string): string {
     submitted: 'text-amber-400 bg-amber-400/10',
     approved: 'text-emerald-400 bg-emerald-400/10',
     rejected: 'text-red-400 bg-red-400/10',
+    // Work Board lanes
+    not_started: 'text-slate-400 bg-slate-400/10',
+    done: 'text-emerald-400 bg-emerald-400/10',
   }
   return colors[status] || 'text-slate-400 bg-slate-400/10'
+}
+
+// Raw hex for the Work Board — lane accents and priority dots
+// are drawn with inline styles, not Tailwind classes.
+export function getWorkItemLaneColor(status: string): string {
+  const colors: Record<string, string> = {
+    not_started: '#94a3b8',
+    in_progress: '#3b82f6',
+    done: '#10b981',
+  }
+  return colors[status] || '#94a3b8'
+}
+
+export function getPriorityColor(priority: string): string {
+  const colors: Record<string, string> = {
+    low: '#64748b',
+    medium: '#f59e0b',
+    high: '#ef4444',
+  }
+  return colors[priority] || '#64748b'
+}
+
+/** A work item is overdue when its due date has passed and it isn't done. */
+export function isOverdue(dueDate?: string | null, status?: string): boolean {
+  if (!dueDate || status === 'done') return false
+  const due = new Date(dueDate)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return due < today
 }
 
 export function getInitials(name: string): string {
