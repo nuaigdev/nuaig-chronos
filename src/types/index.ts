@@ -196,6 +196,20 @@ export interface WorkItemAssignee {
   assigned_at: string
   // Joined
   user?: Profile
+  assigner?: Profile   // who assigned this person (work_item_assignees.assigned_by)
+}
+
+export interface WorkItemComment {
+  id: string
+  work_item_id: string
+  user_id: string
+  body: string
+  edited_at?: string
+  company_id: string
+  created_at: string
+  updated_at: string
+  // Joined
+  user?: Profile
 }
 
 export const WORK_ITEM_STATUS_LABELS: Record<WorkItemStatus, string> = {
@@ -471,6 +485,17 @@ interface WorkItemAssigneeRow {
   assigned_at: string
 }
 
+interface WorkItemCommentRow {
+  id: string
+  work_item_id: string
+  user_id: string
+  body: string
+  edited_at: string | null
+  company_id: string
+  created_at: string
+  updated_at: string
+}
+
 interface TimesheetRow {
   id: string
   user_id: string
@@ -669,6 +694,17 @@ export interface Database {
           assigned_by?: string | null
         }
         Update: Partial<WorkItemAssigneeRow>
+        Relationships: []
+      }
+      work_item_comments: {
+        Row: WorkItemCommentRow
+        Insert: {
+          work_item_id: string
+          user_id: string
+          body: string
+          company_id?: string
+        }
+        Update: Partial<WorkItemCommentRow>
         Relationships: []
       }
       timesheets: {

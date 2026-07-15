@@ -225,12 +225,6 @@ export default function WorkBoardPage() {
         .filter(d => d.name === profile?.department)
         .map(d => ({ value: d.name, label: d.display_name || d.name }))
 
-  // Employees may only pull in their own teammates. Reaching across teams is a
-  // manager/admin act, enforced in RLS as well as here (migration 020).
-  const assignablePeople = canManage
-    ? people
-    : people.filter(p => p.department && p.department === profile?.department)
-
   const renderItems = (list: WorkItem[]) =>
     view === 'board' ? (
       <KanbanLanes
@@ -534,9 +528,12 @@ export default function WorkBoardPage() {
         onClose={() => { setModalOpen(false); setEditing(null) }}
         editing={editing}
         projects={projects}
-        people={assignablePeople}
+        people={people}
         showPriority={settings.showPriority}
         lockedProjectId={scopeType === 'project' && !editing ? projectId : undefined}
+        // Employees pick from the project's members (cross-department included);
+        // managers/admins from everyone. Enforced in RLS too (migration 023).
+        restrictToProjectMembers={!canManage}
         onCreate={createWorkItem}
         onUpdate={updateWorkItem}
       />

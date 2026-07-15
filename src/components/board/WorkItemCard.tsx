@@ -1,5 +1,7 @@
 'use client'
 
+import { useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { WorkItem, WorkItemStatus, WORK_ITEM_LANES, WORK_ITEM_STATUS_LABELS } from '@/types'
 import { formatDate, getInitials, getPriorityColor, isOverdue } from '@/utils'
 import { Calendar, Pencil, Trash2, AlertTriangle } from 'lucide-react'
@@ -38,12 +40,32 @@ export default function WorkItemCard({
   onDragEnd,
   dragging,
 }: WorkItemCardProps) {
+  const router = useRouter()
   const overdue = isOverdue(item.due_date, item.status)
   const assignees = item.assignees || []
+
+  // Where the pointer went down, so we can tell a click from a drag. A card is
+  // draggable, so without this a slightly sloppy drag would register as a click
+  // and navigate away mid-move.
+  const downPos = useRef<{ x: number; y: number } | null>(null)
+
+  const handleClick = (e: React.MouseEvent) => {
+    // Don't navigate when the click was really on a control (buttons, the
+    // checkbox, the mobile status dropdown).
+    if ((e.target as HTMLElement).closest('button, input, select, a, textarea')) return
+    const start = downPos.current
+    if (start) {
+      const moved = Math.abs(e.clientX - start.x) + Math.abs(e.clientY - start.y)
+      if (moved > 5) return // it was a drag, not a click
+    }
+    router.push(`/dashboard/board/${item.id}`)
+  }
 
   return (
     <div
       draggable={canEdit && !isMobile}
+      onMouseDown={e => { downPos.current = { x: e.clientX, y: e.clientY } }}
+      onClick={handleClick}
       onDragStart={e => {
         e.dataTransfer.effectAllowed = 'move'
         e.dataTransfer.setData('text/plain', item.id)
@@ -58,7 +80,7 @@ export default function WorkItemCard({
         display: 'flex',
         flexDirection: 'column',
         gap: '10px',
-        cursor: canEdit && !isMobile ? 'grab' : 'default',
+        cursor: canEdit && !isMobile ? 'grab' : 'pointer',
         opacity: dragging ? 0.4 : 1,
         transition: 'border-color 0.15s, opacity 0.15s, box-shadow 0.15s',
         boxShadow: selected ? '0 0 0 1px var(--chronos-accent)' : 'none',

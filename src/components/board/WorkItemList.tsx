@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { WorkItem, WorkItemStatus, WORK_ITEM_LANES, WORK_ITEM_STATUS_LABELS } from '@/types'
 import { formatDate, getInitials, getPriorityColor, getWorkItemLaneColor, isOverdue } from '@/utils'
 import { StatusBadge } from '@/components/ui'
@@ -55,13 +56,14 @@ export default function WorkItemList({
       background: 'var(--chronos-surface)',
     }}>
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '720px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '860px' }}>
           <thead>
             <tr style={{ background: 'var(--chronos-surface-2)' }}>
               {selectable && <th style={{ width: '36px', padding: '10px 12px' }} />}
               <th style={thStyle}>Work Item</th>
               <th style={thStyle}>Status</th>
               <th style={thStyle}>Assignees</th>
+              <th style={thStyle}>Assigned By</th>
               <th style={thStyle}>Due</th>
               <th style={{ ...thStyle, width: '80px', textAlign: 'right' }}>Actions</th>
             </tr>
@@ -103,13 +105,18 @@ export default function WorkItemList({
                         />
                       )}
                       <div style={{ minWidth: 0 }}>
-                        <div style={{
-                          fontSize: '13px', fontWeight: 600, color: 'var(--chronos-text)',
-                          textDecoration: item.status === 'done' ? 'line-through' : 'none',
-                          opacity: item.status === 'done' ? 0.65 : 1,
-                        }}>
+                        <Link
+                          href={`/dashboard/board/${item.id}`}
+                          style={{
+                            fontSize: '13px', fontWeight: 600, color: 'var(--chronos-text)',
+                            textDecoration: item.status === 'done' ? 'line-through' : 'none',
+                            opacity: item.status === 'done' ? 0.65 : 1,
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.color = 'var(--chronos-accent)')}
+                          onMouseLeave={e => (e.currentTarget.style.color = 'var(--chronos-text)')}
+                        >
                           {item.title}
-                        </div>
+                        </Link>
                         {item.description && (
                           <div style={{
                             fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '2px',
@@ -173,6 +180,23 @@ export default function WorkItemList({
                         )}
                       </div>
                     )}
+                  </td>
+
+                  <td style={tdStyle}>
+                    {(() => {
+                      // Usually one assigner; show the distinct set if a manager
+                      // added people on top of the creator.
+                      const names = Array.from(new Set(
+                        assignees.map(a => a.assigner?.full_name).filter(Boolean) as string[]
+                      ))
+                      return names.length === 0 ? (
+                        <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>—</span>
+                      ) : (
+                        <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
+                          {names.join(', ')}
+                        </span>
+                      )
+                    })()}
                   </td>
 
                   <td style={tdStyle}>

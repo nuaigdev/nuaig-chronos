@@ -51,7 +51,7 @@ Use `src/lib/supabase/server.ts` for server-side data fetching (RSC or API route
 - `projects` + `project_members` — projects with team assignment (employees only see projects they're assigned to)
 - `task_types` — the department-scoped master list used by **timesheets** ("Code Review", "Standup"). Not the Work Board.
 - `tasks` — **legacy and dormant.** Admin-only RLS, single assignee, kept alive only because `time_logs.task_id` still references it. Do not build on it; use `work_items`.
-- `work_items` + `work_item_assignees` — the Work Board (see below)
+- `work_items` + `work_item_assignees` + `work_item_comments` — the Work Board (see below)
 - `timesheets` — weekly timesheets with approval workflow: `draft → submitted → approved/rejected`
 - `time_logs` — individual time entries linked to a project + optional task
 - `notifications` — consumed via Supabase Realtime in `src/hooks/useNotifications.ts`
@@ -63,15 +63,18 @@ A simple kanban: three lanes (`not_started | in_progress | done`), multiple assi
 
 - **Team scope** — pick a department; every item any of its members is assigned to, horizontally separated into one section per project.
 - **Project scope** — one project, no grouping. Also embedded on `/dashboard/projects/[id]`.
+- **Item detail** (`/dashboard/board/[id]`, `useWorkItem`) — clicking a card opens it: full fields, per-assignee "Assigned by", and a comment thread (`work_item_comments`, `useWorkItemComments`). Editing still goes through `WorkItemModal`; the page is view + discuss. Cards guard click-vs-drag by pointer distance so a sloppy drag doesn't navigate.
 
 Two design decisions that are easy to get wrong:
 
 1. **`work_items` has no `department` column, on purpose.** Projects span departments, so an item has no single owning department. The team board is derived from the departments of the item's *assignees*. The consequence is that an item with **zero assignees appears on no team board** — the board header surfaces an "Unassigned" count so those don't silently vanish.
 2. **Team scope is fetched in two steps** (`useWorkItems`), not one filtered join. A single `work_item_assignees!inner(...)` filtered by `user_id` would return only the *matching* assignees on each card, so an item shared across two departments would render a half-empty avatar list. Resolve the item IDs first, then fetch those items with their full assignee list.
 
-**Access (migration 020).** Admins and managers see every department's board and may assign anyone — reaching across teams is deliberately *their* act. Employees are confined to their own department: the department picker is locked to it, and the assignee picker only lists their own teammates. This is enforced in RLS, not just the UI — `work_items` SELECT lets an employee see only items their department is on, items in projects they belong to, or items they raised themselves.
+**Visibility (migrations 020, 022).** Admins and managers see every department's board. Employees see only items their **department** is on, items in **projects they belong to**, or items they **raised**. The team-board department picker is locked to their own department. This rule lives in **one place**: the `can_view_work_item(work_item_id, user_id)` `SECURITY DEFINER` function (migration 022), called by both the `work_items` SELECT policy and the `work_item_comments` SELECT policy. **Do not inline or copy this predicate** — if comments and items get separate copies they drift, and an employee reads a discussion on an item they can't see, silently undoing the restriction.
 
-Project scope stays cross-department on purpose (projects span departments by design, so hiding co-workers there would defeat the point); an employee still only reaches projects they're a member of. Note `work_item_assignees` SELECT stays company-wide **deliberately** — a card must render its full avatar row from whichever board it's viewed on. Visibility is gated on the work item, not on the assignee rows.
+**Assignment (migration 023).** *Who you can assign* is by **project membership, not department**: an employee may assign anyone who is a member of the item's project — cross-department included — on an item they created. (Department still governs board *visibility*, above; only assignment moved to project membership, because projects span departments and you assign work to people on the project.) Admins/managers may assign anyone. The UI mirrors this: `WorkItemModal`'s `restrictToProjectMembers` (true for employees) narrows the picker to the selected project's members. `assigned_by` is recorded per assignee and surfaced as "Assigned by" on the detail page and list view.
+
+Project scope stays cross-department on purpose (projects span departments by design). Note `work_item_assignees` SELECT stays company-wide **deliberately** — a card must render its full avatar row from whichever board it's viewed on. Visibility is gated on the work item, not on the assignee rows.
 
 Employees may create items only inside projects they belong to, and only while `board_employee_can_create` allows it. Assignees can always move their own cards between lanes.
 

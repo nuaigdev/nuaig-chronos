@@ -1,9 +1,9 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
 import { useNotifications } from '@/hooks/useNotifications'
-import { AppNotification } from '@/types'
 import { formatDate } from '@/utils'
-import { Bell, Check, CheckCheck, Clock, FileText, AlertCircle } from 'lucide-react'
+import { Bell, Check, CheckCheck, Clock, FileText, AlertCircle, KanbanSquare } from 'lucide-react'
 import { EmptyState } from '@/components/ui'
 
 const ICONS: Record<string, React.ReactNode> = {
@@ -13,9 +13,23 @@ const ICONS: Record<string, React.ReactNode> = {
   time_log_reminder: <Clock size={16} style={{ color: 'var(--chronos-warning)' }} />,
   timesheet_reminder: <Clock size={16} style={{ color: 'var(--chronos-warning)' }} />,
   pending_approval_alert: <AlertCircle size={16} style={{ color: 'var(--chronos-danger)' }} />,
+  work_item_assigned: <KanbanSquare size={16} style={{ color: 'var(--chronos-accent)' }} />,
+  work_item_status_changed: <KanbanSquare size={16} style={{ color: 'var(--chronos-info)' }} />,
+  work_item_due_soon: <KanbanSquare size={16} style={{ color: 'var(--chronos-warning)' }} />,
+  work_item_commented: <KanbanSquare size={16} style={{ color: 'var(--chronos-accent)' }} />,
 }
 
+// Work Board notifications store the work item id in related_id, so they can
+// deep-link to the item's page. Other types have no destination (yet).
+const WORK_ITEM_TYPES = new Set([
+  'work_item_assigned',
+  'work_item_status_changed',
+  'work_item_due_soon',
+  'work_item_commented',
+])
+
 export default function NotificationsPage() {
+  const router = useRouter()
   const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications()
 
   return (
@@ -38,10 +52,18 @@ export default function NotificationsPage() {
         <EmptyState icon={<Bell size={28} />} title="No notifications" description="You're all caught up! Notifications about timesheets and approvals will appear here." />
       ) : (
         <div className="card-base" style={{ overflow: 'hidden' }}>
-          {notifications.map((n, i) => (
+          {notifications.map((n, i) => {
+            const target = WORK_ITEM_TYPES.has(n.type) && n.related_id
+              ? `/dashboard/board/${n.related_id}`
+              : null
+            const clickable = target !== null || !n.is_read
+            return (
             <div
               key={n.id}
-              onClick={() => !n.is_read && markAsRead(n.id)}
+              onClick={() => {
+                if (!n.is_read) markAsRead(n.id)
+                if (target) router.push(target)
+              }}
               style={{
                 padding: '16px 20px',
                 display: 'flex',
@@ -49,7 +71,7 @@ export default function NotificationsPage() {
                 alignItems: 'flex-start',
                 borderBottom: i < notifications.length - 1 ? '1px solid var(--chronos-border)' : 'none',
                 background: n.is_read ? 'transparent' : 'var(--chronos-accent-glow)',
-                cursor: n.is_read ? 'default' : 'pointer',
+                cursor: clickable ? 'pointer' : 'default',
                 transition: 'background 0.15s',
               }}
               onMouseEnter={e => { if (!n.is_read) e.currentTarget.style.background = 'rgba(59,130,246,0.08)' }}
@@ -69,7 +91,8 @@ export default function NotificationsPage() {
                 <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--chronos-accent)', flexShrink: 0, marginTop: '6px' }} />
               )}
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

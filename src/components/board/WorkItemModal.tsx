@@ -7,9 +7,13 @@ import {
 } from '@/types'
 import { Modal, FormField, Select } from '@/components/ui'
 import { CreateWorkItemInput } from '@/hooks/useWorkItems'
+import { createClient } from '@/lib/supabase/client'
 import { getInitials, getPriorityColor } from '@/utils'
 import { Check, Search } from 'lucide-react'
 import toast from 'react-hot-toast'
+
+// Single stable client instance — never recreate inside a component
+const supabase = createClient()
 
 interface WorkItemModalProps {
   isOpen: boolean
@@ -21,6 +25,13 @@ interface WorkItemModalProps {
   showPriority: boolean
   /** Locked when the board is scoped to a single project. */
   lockedProjectId?: string
+  /**
+   * When true, the assignee list is narrowed to members of the selected
+   * project. Used for employees: they may assign anyone on the project
+   * (cross-department included), but not arbitrary company staff. Admins and
+   * managers pass false and see everyone.
+   */
+  restrictToProjectMembers?: boolean
   onCreate: (input: CreateWorkItemInput) => Promise<boolean>
   onUpdate: (id: string, patch: Partial<WorkItem>, assigneeIds: string[]) => Promise<boolean>
 }
@@ -35,6 +46,7 @@ export default function WorkItemModal({
   people,
   showPriority,
   lockedProjectId,
+  restrictToProjectMembers = false,
   onCreate,
   onUpdate,
 }: WorkItemModalProps) {
@@ -47,6 +59,28 @@ export default function WorkItemModal({
   const [assigneeIds, setAssigneeIds] = useState<string[]>([])
   const [personSearch, setPersonSearch] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // null = no restriction in effect (either not restricted, or not yet loaded).
+  const [memberIds, setMemberIds] = useState<string[] | null>(null)
+
+  // When restricted, narrow the candidate pool to the selected project's
+  // members. Re-runs when the project changes (it can change inside the modal
+  // in team-scope create), so the list always matches the chosen project.
+  useEffect(() => {
+    if (!restrictToProjectMembers || !projectId) { setMemberIds(null); return }
+    let cancelled = false
+
+    ;(async () => {
+      const { data } = await supabase
+        .from('project_members')
+        .select('user_id')
+        .eq('project_id', projectId)
+      if (cancelled) return
+      setMemberIds(((data || []) as { user_id: string }[]).map(r => r.user_id))
+    })()
+
+    return () => { cancelled = true }
+  }, [restrictToProjectMembers, projectId])
 
   // Reset the form whenever the modal opens, so a previous edit never
   // bleeds into the next create.
@@ -117,7 +151,13 @@ export default function WorkItemModal({
     if (ok) onClose()
   }
 
-  const filteredPeople = people.filter(p => {
+  // The pool you may pick from. When restricted, it's the selected project's
+  // members; otherwise the full list passed in.
+  const candidatePool = restrictToProjectMembers && memberIds !== null
+    ? people.filter(p => memberIds.includes(p.id))
+    : people
+
+  const filteredPeople = candidatePool.filter(p => {
     if (!personSearch.trim()) return true
     const q = personSearch.toLowerCase()
     return (
@@ -126,12 +166,12 @@ export default function WorkItemModal({
     )
   })
 
-  // An employee's picker only lists their own department, so a teammate a
-  // manager pulled in from elsewhere isn't in `people`. They stay assigned
-  // (the save diffs against the current list rather than replacing it), but
-  // an unexplained "Assignees (3)" over a list of 2 would just look broken.
+  // Someone already assigned who isn't in the current candidate pool — e.g. a
+  // manager pulled in a non-project-member. They stay assigned (the save diffs
+  // against the current list rather than replacing it), but an unexplained
+  // "Assignees (3)" over a list of 2 would just look broken.
   const hiddenAssigneeCount = assigneeIds.filter(
-    id => !people.some(p => p.id === id)
+    id => !candidatePool.some(p => p.id === id)
   ).length
 
   return (
@@ -315,9 +355,9 @@ export default function WorkItemModal({
 
           {hiddenAssigneeCount > 0 && (
             <p style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', marginTop: '2px' }}>
-              {hiddenAssigneeCount} {hiddenAssigneeCount === 1 ? 'person' : 'people'} from another
-              department {hiddenAssigneeCount === 1 ? 'is' : 'are'} also on this item and will stay
-              assigned. Only a manager or admin can change that.
+              {hiddenAssigneeCount} {hiddenAssigneeCount === 1 ? 'person' : 'people'} already on this
+              item {hiddenAssigneeCount === 1 ? 'is' : 'are'} outside your assignable list and will
+              stay assigned. Only a manager or admin can change that.
             </p>
           )}
         </FormField>

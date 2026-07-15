@@ -31,8 +31,9 @@ const SELECT_WITH_JOINS = `
   project:projects(id, name, client_id, client:clients(id, name)),
   creator:profiles!work_items_created_by_fkey(id, full_name),
   assignees:work_item_assignees(
-    id, work_item_id, user_id, assigned_at,
-    user:profiles!work_item_assignees_user_id_fkey(id, full_name, department, role)
+    id, work_item_id, user_id, assigned_by, assigned_at,
+    user:profiles!work_item_assignees_user_id_fkey(id, full_name, department, role),
+    assigner:profiles!work_item_assignees_assigned_by_fkey(id, full_name)
   )
 `
 
@@ -384,6 +385,155 @@ export function useWorkItems(
     bulkSetStatus,
     bulkDelete,
   }
+}
+
+// ============================================
+// SINGLE WORK ITEM (detail page)
+// ============================================
+
+interface UseWorkItemResult {
+  item: WorkItem | null
+  loading: boolean
+  notFound: boolean
+  refetch: () => void
+  updateItem: (patch: Partial<WorkItem>, assigneeIds?: string[]) => Promise<boolean>
+  moveItem: (status: WorkItemStatus) => Promise<void>
+  deleteItem: () => Promise<boolean>
+}
+
+/**
+ * Loads one work item with its joins for the detail page, and exposes the same
+ * mutations the board offers. Kept separate from useWorkItems (which is scoped
+ * to a whole board) rather than folded in, so the live board hook is untouched.
+ */
+export function useWorkItem(id: string | undefined): UseWorkItemResult {
+  const [item, setItem] = useState<WorkItem | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [notFound, setNotFound] = useState(false)
+  const [tick, setTick] = useState(0)
+
+  const refetch = useCallback(() => setTick(t => t + 1), [])
+
+  useEffect(() => {
+    if (!id) { setLoading(false); setNotFound(true); return }
+    let cancelled = false
+
+    const load = async () => {
+      const { data, error } = await supabase
+        .from('work_items')
+        .select(SELECT_WITH_JOINS)
+        .eq('id', id)
+        .maybeSingle()
+
+      if (cancelled) return
+      if (error) {
+        console.error('[useWorkItem]', error)
+        toast.error('Failed to load the work item')
+        setLoading(false)
+        return
+      }
+      if (!data) {
+        setNotFound(true)
+        setItem(null)
+      } else {
+        setItem(data as unknown as WorkItem)
+      }
+      setLoading(false)
+    }
+
+    setLoading(true)
+    load()
+    return () => { cancelled = true }
+  }, [id, tick])
+
+  // Realtime: reflect edits, moves and (re)assignments made elsewhere.
+  useEffect(() => {
+    if (!id) return
+    const channel = supabase
+      .channel(`work-item-${id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'work_items', filter: `id=eq.${id}` }, () => refetch())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'work_item_assignees', filter: `work_item_id=eq.${id}` }, () => refetch())
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [id, refetch])
+
+  const notify = async (userIds: string[], actorId: string, title: string, message: string, type: string) => {
+    await Promise.all(
+      Array.from(new Set(userIds))
+        .filter(uid => uid !== actorId)
+        .map(uid => createNotification(supabase, { user_id: uid, type, title, message, related_id: id }))
+    )
+  }
+
+  const updateItem = async (patch: Partial<WorkItem>, assigneeIds?: string[]): Promise<boolean> => {
+    if (!id) return false
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return false
+
+    const { error } = await supabase.from('work_items').update(patch as never).eq('id', id)
+    if (error) {
+      toast.error(error.message || 'Could not save changes')
+      return false
+    }
+
+    if (assigneeIds) {
+      const { data: existing } = await supabase
+        .from('work_item_assignees')
+        .select('user_id')
+        .eq('work_item_id', id)
+
+      const current = ((existing || []) as { user_id: string }[]).map(r => r.user_id)
+      const added = assigneeIds.filter(uid => !current.includes(uid))
+      const removed = current.filter(uid => !assigneeIds.includes(uid))
+
+      if (added.length > 0) {
+        await supabase.from('work_item_assignees').insert(
+          added.map(uid => ({ work_item_id: id, user_id: uid, assigned_by: user.id }))
+        )
+        await notify(added, user.id, 'New work item assigned', `You were assigned to "${patch.title ?? item?.title ?? 'a work item'}"`, 'work_item_assigned')
+      }
+      if (removed.length > 0) {
+        await supabase.from('work_item_assignees').delete().eq('work_item_id', id).in('user_id', removed)
+      }
+    }
+
+    toast.success('Work item updated')
+    refetch()
+    return true
+  }
+
+  const moveItem = async (status: WorkItemStatus) => {
+    if (!id || !item || item.status === status) return
+    const previous = item
+    setItem({ ...item, status })
+
+    const { data: { user } } = await supabase.auth.getUser()
+    const { error } = await supabase.from('work_items').update({ status } as never).eq('id', id)
+    if (error) {
+      setItem(previous)
+      toast.error('Could not move that card')
+      return
+    }
+
+    const others = (item.assignees || []).map(a => a.user_id)
+    if (user && others.length > 0) {
+      await notify(others, user.id, 'Work item updated', `"${item.title}" moved to ${status.replace(/_/g, ' ')}`, 'work_item_status_changed')
+    }
+  }
+
+  const deleteItem = async (): Promise<boolean> => {
+    if (!id) return false
+    const { error } = await supabase.from('work_items').delete().eq('id', id)
+    if (error) {
+      toast.error('Could not delete that work item')
+      return false
+    }
+    toast.success('Work item deleted')
+    return true
+  }
+
+  return { item, loading, notFound, refetch, updateItem, moveItem, deleteItem }
 }
 
 // ============================================
