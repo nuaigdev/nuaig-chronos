@@ -97,6 +97,23 @@ export function getRoleColor(role: string): string {
   return colors[role] || 'text-slate-400 bg-slate-400/10'
 }
 
+/**
+ * The current user's display name, for notification messages
+ * ("Tanay commented on …"). Falls back to "Someone" if unavailable.
+ */
+export async function getActorName(
+  supabase: ReturnType<typeof import('@/lib/supabase/client').createClient>
+): Promise<string> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return 'Someone'
+  const { data } = await supabase
+    .from('profiles')
+    .select('full_name')
+    .eq('id', user.id)
+    .single()
+  return ((data?.full_name as string) || 'Someone')
+}
+
 export async function createNotification(
   supabase: ReturnType<typeof import('@/lib/supabase/client').createClient>,
   {

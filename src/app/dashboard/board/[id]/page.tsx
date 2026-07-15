@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/client'
 import { useProfile } from '@/hooks/useProfile'
 import { useWorkItem, useCompanyPeople, useBoardSettings } from '@/hooks/useWorkItems'
-import { WorkItemStatus, WORK_ITEM_LANES, WORK_ITEM_STATUS_LABELS } from '@/types'
+import { WorkItemStatus, Profile, WORK_ITEM_LANES, WORK_ITEM_STATUS_LABELS } from '@/types'
 import { Select, EmptyState, Skeleton } from '@/components/ui'
 import WorkItemModal from '@/components/board/WorkItemModal'
 import WorkItemComments from '@/components/board/WorkItemComments'
@@ -16,6 +17,9 @@ import {
   ArrowLeft, Pencil, Trash2, Calendar, AlertTriangle, FolderKanban, KanbanSquare, UserPlus,
 } from 'lucide-react'
 
+// Single stable client instance — never recreate inside a component
+const supabase = createClient()
+
 export default function WorkItemDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
@@ -25,6 +29,30 @@ export default function WorkItemDetailPage() {
   const { item, loading, notFound, updateItem, moveItem, deleteItem } = useWorkItem(id)
 
   const [modalOpen, setModalOpen] = useState(false)
+
+  // Project members — the pool for @-mentions in comments. Fetched once the
+  // item (and thus its project) is known.
+  const [projectMembers, setProjectMembers] = useState<Profile[]>([])
+  const projectId = item?.project_id
+  useEffect(() => {
+    if (!projectId) return
+    let cancelled = false
+    ;(async () => {
+      const { data: rows } = await supabase
+        .from('project_members')
+        .select('user_id')
+        .eq('project_id', projectId)
+      const ids = ((rows || []) as { user_id: string }[]).map(r => r.user_id)
+      if (ids.length === 0) { if (!cancelled) setProjectMembers([]); return }
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, department, role')
+        .in('id', ids)
+        .order('full_name')
+      if (!cancelled) setProjectMembers((data || []) as unknown as Profile[])
+    })()
+    return () => { cancelled = true }
+  }, [projectId])
 
   const canManage = isAdmin || isManager
 
@@ -213,6 +241,7 @@ export default function WorkItemDetailPage() {
       <WorkItemComments
         workItemId={item.id}
         notifyTarget={{ title: item.title, recipientIds: notifyRecipients }}
+        projectMembers={projectMembers}
       />
 
       {/* Edit modal — reuses the board's create/edit form. */}

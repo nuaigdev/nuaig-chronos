@@ -23,6 +23,9 @@ export type NotificationType =
   | 'work_item_assigned'
   | 'work_item_status_changed'
   | 'work_item_due_soon'
+  | 'work_item_commented'
+  | 'work_item_mentioned'
+  | 'work_item_updated'
 
 // Department is now a free-text string (migration 009 dropped the enum).
 // The six seed values are kept as a convenience constant but the type is open.
@@ -186,6 +189,7 @@ export interface WorkItem {
   project?: Project
   creator?: Profile
   assignees?: WorkItemAssignee[]
+  comment_count?: number   // flattened from work_item_comments(count)
 }
 
 export interface WorkItemAssignee {
@@ -204,12 +208,14 @@ export interface WorkItemComment {
   work_item_id: string
   user_id: string
   body: string
+  mentioned_user_ids?: string[]
   edited_at?: string
   company_id: string
   created_at: string
   updated_at: string
   // Joined
   user?: Profile
+  mentions?: Profile[]   // resolved names for the mentioned_user_ids, for rendering
 }
 
 export const WORK_ITEM_STATUS_LABELS: Record<WorkItemStatus, string> = {
@@ -490,6 +496,7 @@ interface WorkItemCommentRow {
   work_item_id: string
   user_id: string
   body: string
+  mentioned_user_ids: string[]
   edited_at: string | null
   company_id: string
   created_at: string
@@ -702,6 +709,7 @@ export interface Database {
           work_item_id: string
           user_id: string
           body: string
+          mentioned_user_ids?: string[]
           company_id?: string
         }
         Update: Partial<WorkItemCommentRow>

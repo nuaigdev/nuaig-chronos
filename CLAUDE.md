@@ -63,7 +63,11 @@ A simple kanban: three lanes (`not_started | in_progress | done`), multiple assi
 
 - **Team scope** — pick a department; every item any of its members is assigned to, horizontally separated into one section per project.
 - **Project scope** — one project, no grouping. Also embedded on `/dashboard/projects/[id]`.
-- **Item detail** (`/dashboard/board/[id]`, `useWorkItem`) — clicking a card opens it: full fields, per-assignee "Assigned by", and a comment thread (`work_item_comments`, `useWorkItemComments`). Editing still goes through `WorkItemModal`; the page is view + discuss. Cards guard click-vs-drag by pointer distance so a sloppy drag doesn't navigate.
+- **Item detail** (`/dashboard/board/[id]`, `useWorkItem`) — clicking a card opens it: full fields, per-assignee "Assigned by", and a comment thread (`work_item_comments`, `useWorkItemComments`). Editing still goes through `WorkItemModal`; the page is view + discuss. Cards guard click-vs-drag by pointer distance so a sloppy drag doesn't navigate. Cards show a comment count (embedded as `comment_count:work_item_comments(count)`, flattened from PostgREST's `[{count}]` shape by `flattenWorkItem`).
+
+**Comments & @-mentions.** Comments support `@`-mentions **restricted to project members** — the composer only offers them, and a `BEFORE INSERT/UPDATE` trigger (migration 026) strips any `mentioned_user_ids` that aren't members of the item's project, so it's enforced server-side too. Mentions are stored as a `UUID[]` column (not inline tokens); rendering highlights `@Name` by matching the resolved mention names. Mentioned people get a distinct `work_item_mentioned` notification and are removed from the generic `work_item_commented` batch (no double-ping).
+
+**Notifications name the actor.** Every work-item notification is worded "‹Actor› commented/moved/assigned/updated …" via `getActorName()`. Field edits emit `work_item_updated`; status moves emit `work_item_status_changed`. Recipients are always the item's assignees + creator, minus the actor. Assignment notifications fire **only after the assignee row actually persists** — the reconciliation checks the insert error rather than notifying blindly (that was the "notified but not added" bug).
 
 Two design decisions that are easy to get wrong:
 
@@ -79,6 +83,8 @@ The core takes the columns **as arguments**, and the `work_items` SELECT policy 
 Project scope stays cross-department on purpose (projects span departments by design). Note `work_item_assignees` SELECT stays company-wide **deliberately** — a card must render its full avatar row from whichever board it's viewed on. Visibility is gated on the work item, not on the assignee rows.
 
 Employees may create items only inside projects they belong to, and only while `board_employee_can_create` allows it. Assignees can always move their own cards between lanes.
+
+**Who can change assignees (migration 027):** admins, managers, the creator, **and any existing assignee** — an assignee may "extend" the item to other people. This deliberately matches the `work_items` UPDATE policy (which lets assignees edit the item), so there's no path where someone can edit the item but not its assignees — that asymmetry was the silent-reject half of the "notified but not added" bug. The added person must still be a project member.
 
 RLS helpers are all `SECURITY DEFINER` on purpose: the `work_item_assignees` policy reads `work_items` and vice versa, so a plain `EXISTS` subquery between them would recurse.
 

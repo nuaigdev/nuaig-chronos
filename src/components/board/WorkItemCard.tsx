@@ -4,7 +4,7 @@ import { useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { WorkItem, WorkItemStatus, WORK_ITEM_LANES, WORK_ITEM_STATUS_LABELS } from '@/types'
 import { formatDate, getInitials, getPriorityColor, isOverdue } from '@/utils'
-import { Calendar, Pencil, Trash2, AlertTriangle } from 'lucide-react'
+import { Calendar, Pencil, Trash2, AlertTriangle, MessageSquare } from 'lucide-react'
 
 interface WorkItemCardProps {
   item: WorkItem
@@ -188,16 +188,31 @@ export default function WorkItemCard({
           )}
         </div>
 
-        {item.due_date && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '4px',
-            fontSize: '11px', fontWeight: 500,
-            color: overdue ? 'var(--chronos-danger)' : 'var(--chronos-text-muted)',
-          }}>
-            {overdue ? <AlertTriangle size={11} /> : <Calendar size={11} />}
-            {formatDate(item.due_date, 'MMM d')}
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {(item.comment_count ?? 0) > 0 && (
+            <div
+              title={`${item.comment_count} comment${item.comment_count === 1 ? '' : 's'}`}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '3px',
+                fontSize: '11px', fontWeight: 500, color: 'var(--chronos-text-muted)',
+              }}
+            >
+              <MessageSquare size={11} />
+              {item.comment_count}
+            </div>
+          )}
+
+          {item.due_date && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '4px',
+              fontSize: '11px', fontWeight: 500,
+              color: overdue ? 'var(--chronos-danger)' : 'var(--chronos-text-muted)',
+            }}>
+              {overdue ? <AlertTriangle size={11} /> : <Calendar size={11} />}
+              {formatDate(item.due_date, 'MMM d')}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Touch fallback for lane changes */}

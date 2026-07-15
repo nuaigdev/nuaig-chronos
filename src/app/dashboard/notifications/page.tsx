@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { useNotifications } from '@/hooks/useNotifications'
 import { formatDate } from '@/utils'
-import { Bell, Check, CheckCheck, Clock, FileText, AlertCircle, KanbanSquare } from 'lucide-react'
+import { Bell, Check, CheckCheck, Clock, FileText, AlertCircle, KanbanSquare, MessageSquare, AtSign } from 'lucide-react'
 import { EmptyState } from '@/components/ui'
 
 const ICONS: Record<string, React.ReactNode> = {
@@ -16,7 +16,9 @@ const ICONS: Record<string, React.ReactNode> = {
   work_item_assigned: <KanbanSquare size={16} style={{ color: 'var(--chronos-accent)' }} />,
   work_item_status_changed: <KanbanSquare size={16} style={{ color: 'var(--chronos-info)' }} />,
   work_item_due_soon: <KanbanSquare size={16} style={{ color: 'var(--chronos-warning)' }} />,
-  work_item_commented: <KanbanSquare size={16} style={{ color: 'var(--chronos-accent)' }} />,
+  work_item_commented: <MessageSquare size={16} style={{ color: 'var(--chronos-accent)' }} />,
+  work_item_mentioned: <AtSign size={16} style={{ color: 'var(--chronos-accent)' }} />,
+  work_item_updated: <KanbanSquare size={16} style={{ color: 'var(--chronos-info)' }} />,
 }
 
 // Work Board notifications store the work item id in related_id, so they can
@@ -26,6 +28,8 @@ const WORK_ITEM_TYPES = new Set([
   'work_item_status_changed',
   'work_item_due_soon',
   'work_item_commented',
+  'work_item_mentioned',
+  'work_item_updated',
 ])
 
 export default function NotificationsPage() {

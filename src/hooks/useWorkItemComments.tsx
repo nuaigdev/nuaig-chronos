@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { WorkItemComment } from '@/types'
-import { createNotification } from '@/utils'
+import { WorkItemComment, Profile } from '@/types'
+import { createNotification, getActorName } from '@/utils'
 import toast from 'react-hot-toast'
 
 // Single stable client instance — never recreate inside a component
@@ -23,8 +23,8 @@ export interface CommentNotifyTarget {
 interface UseWorkItemCommentsResult {
   comments: WorkItemComment[]
   loading: boolean
-  postComment: (body: string, notify: CommentNotifyTarget) => Promise<boolean>
-  editComment: (id: string, body: string) => Promise<boolean>
+  postComment: (body: string, notify: CommentNotifyTarget, mentionedIds?: string[]) => Promise<boolean>
+  editComment: (id: string, body: string, mentionedIds?: string[]) => Promise<boolean>
   deleteComment: (id: string) => Promise<void>
 }
 
@@ -50,9 +50,29 @@ export function useWorkItemComments(workItemId: string | undefined): UseWorkItem
       if (error) {
         console.error('[useWorkItemComments]', error)
         toast.error('Failed to load comments')
-      } else {
-        setComments((data || []) as unknown as WorkItemComment[])
+        setLoading(false)
+        return
       }
+
+      const rows = (data || []) as unknown as WorkItemComment[]
+
+      // Resolve mentioned_user_ids → names so the body can highlight them.
+      // mentioned_user_ids is an array column (not a FK), so it can't be
+      // embedded — batch-fetch the profiles in one query and attach them.
+      const allMentionIds = Array.from(new Set(rows.flatMap(c => c.mentioned_user_ids || [])))
+      const nameMap: Record<string, Profile> = {}
+      if (allMentionIds.length > 0) {
+        const { data: people } = await supabase
+          .from('profiles')
+          .select('id, full_name')
+          .in('id', allMentionIds)
+        for (const p of (people || []) as unknown as Profile[]) nameMap[p.id] = p
+      }
+      if (cancelled) return
+      setComments(rows.map(c => ({
+        ...c,
+        mentions: (c.mentioned_user_ids || []).map(uid => nameMap[uid]).filter(Boolean) as Profile[],
+      })))
       setLoading(false)
     }
 
@@ -76,31 +96,52 @@ export function useWorkItemComments(workItemId: string | undefined): UseWorkItem
     return () => { supabase.removeChannel(channel) }
   }, [workItemId, refetch])
 
-  const postComment = async (body: string, notify: CommentNotifyTarget): Promise<boolean> => {
+  const postComment = async (
+    body: string,
+    notify: CommentNotifyTarget,
+    mentionedIds: string[] = [],
+  ): Promise<boolean> => {
     const trimmed = body.trim()
     if (!trimmed || !workItemId) return false
 
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return false
 
+    const mentions = Array.from(new Set(mentionedIds))
+
     const { error } = await supabase
       .from('work_item_comments')
-      .insert({ work_item_id: workItemId, user_id: user.id, body: trimmed })
+      .insert({ work_item_id: workItemId, user_id: user.id, body: trimmed, mentioned_user_ids: mentions })
 
     if (error) {
       toast.error(error.message || 'Could not post comment')
       return false
     }
 
-    // Ping everyone attached to the item except the commenter.
+    const actor = await getActorName(supabase)
+    const mentionSet = new Set(mentions.filter(uid => uid !== user.id))
+
+    // Mentioned people get the distinct "mentioned you" ping.
+    await Promise.all(
+      Array.from(mentionSet).map(uid => createNotification(supabase, {
+        user_id: uid,
+        type: 'work_item_mentioned',
+        title: 'You were mentioned',
+        message: `${actor} mentioned you on "${notify.title}"`,
+        related_id: workItemId,
+      }))
+    )
+
+    // Everyone else attached to the item gets the generic "commented" ping —
+    // minus the commenter and minus anyone already pinged via a mention.
     await Promise.all(
       Array.from(new Set(notify.recipientIds))
-        .filter(uid => uid !== user.id)
+        .filter(uid => uid !== user.id && !mentionSet.has(uid))
         .map(uid => createNotification(supabase, {
           user_id: uid,
           type: 'work_item_commented',
           title: 'New comment',
-          message: `New comment on "${notify.title}"`,
+          message: `${actor} commented on "${notify.title}"`,
           related_id: workItemId,
         }))
     )
@@ -109,19 +150,45 @@ export function useWorkItemComments(workItemId: string | undefined): UseWorkItem
     return true
   }
 
-  const editComment = async (id: string, body: string): Promise<boolean> => {
+  const editComment = async (
+    id: string,
+    body: string,
+    mentionedIds: string[] = [],
+  ): Promise<boolean> => {
     const trimmed = body.trim()
     if (!trimmed) return false
 
+    const { data: { user } } = await supabase.auth.getUser()
+    const mentions = Array.from(new Set(mentionedIds))
+
+    // Mentions added by this edit — so we only notify newly-tagged people.
+    const before = new Set(comments.find(c => c.id === id)?.mentioned_user_ids || [])
+
     const { error } = await supabase
       .from('work_item_comments')
-      .update({ body: trimmed } as never)
+      .update({ body: trimmed, mentioned_user_ids: mentions } as never)
       .eq('id', id)
 
     if (error) {
       toast.error('Could not save the edit')
       return false
     }
+
+    if (user) {
+      const newlyMentioned = mentions.filter(uid => uid !== user.id && !before.has(uid))
+      if (newlyMentioned.length > 0) {
+        const actor = await getActorName(supabase)
+        const item = comments.find(c => c.id === id)
+        await Promise.all(newlyMentioned.map(uid => createNotification(supabase, {
+          user_id: uid,
+          type: 'work_item_mentioned',
+          title: 'You were mentioned',
+          message: `${actor} mentioned you in a comment`,
+          related_id: item?.work_item_id,
+        })))
+      }
+    }
+
     refetch()
     return true
   }

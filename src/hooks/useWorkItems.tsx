@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { WorkItem, WorkItemStatus, WorkItemPriority, Profile } from '@/types'
-import { createNotification } from '@/utils'
+import { createNotification, getActorName } from '@/utils'
 import toast from 'react-hot-toast'
 
 // Single stable client instance — never recreate inside a component
@@ -34,8 +34,20 @@ const SELECT_WITH_JOINS = `
     id, work_item_id, user_id, assigned_by, assigned_at,
     user:profiles!work_item_assignees_user_id_fkey(id, full_name, department, role),
     assigner:profiles!work_item_assignees_assigned_by_fkey(id, full_name)
-  )
+  ),
+  comment_count:work_item_comments(count)
 `
+
+/**
+ * PostgREST returns an aggregate embed as `comment_count: [{ count: N }]`.
+ * Flatten it to a plain number so the card can read `item.comment_count`.
+ */
+function flattenWorkItem(row: unknown): WorkItem {
+  const r = row as WorkItem & { comment_count?: unknown }
+  const raw = r.comment_count as unknown
+  const count = Array.isArray(raw) ? ((raw[0] as { count?: number })?.count ?? 0) : (typeof raw === 'number' ? raw : 0)
+  return { ...r, comment_count: count }
+}
 
 interface UseWorkItemsResult {
   items: WorkItem[]
@@ -150,7 +162,7 @@ export function useWorkItems(
           return
         }
 
-        setItems((data || []) as unknown as WorkItem[])
+        setItems(((data || []) as unknown[]).map(flattenWorkItem))
       } catch (err) {
         console.error('[useWorkItems] load failed', err)
       } finally {
@@ -166,12 +178,14 @@ export function useWorkItems(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey, archiveDoneDays, tick])
 
-  // Realtime: a card dragged on one screen moves on everyone else's.
+  // Realtime: a card dragged on one screen moves on everyone else's, and the
+  // comment count keeps up as people comment.
   useEffect(() => {
     const channel = supabase
       .channel('work-board')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'work_items' }, () => refetch())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'work_item_assignees' }, () => refetch())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'work_item_comments' }, () => refetch())
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
@@ -235,10 +249,11 @@ export function useWorkItems(
         // reporting a clean success the user can't act on.
         toast.error('Work item created, but assigning people failed')
       } else {
+        const actor = await getActorName(supabase)
         await notifyAssignees(
           input.assignee_ids, user.id,
           'New work item assigned',
-          `You were assigned to "${input.title.trim()}"`,
+          `${actor} assigned you to "${input.title.trim()}"`,
           itemId, 'work_item_assigned',
         )
       }
@@ -257,6 +272,10 @@ export function useWorkItems(
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return false
 
+    // Snapshot the old row (from board state) so we can tell what changed
+    // and whether the status moved — used to word the notifications.
+    const old = items.find(i => i.id === id)
+
     const { error } = await supabase
       .from('work_items')
       .update(patch as never)
@@ -266,6 +285,9 @@ export function useWorkItems(
       toast.error(error.message || 'Could not save changes')
       return false
     }
+
+    const actor = await getActorName(supabase)
+    const title = patch.title ?? old?.title ?? 'a work item'
 
     // Reconcile the assignee list as a diff, so we don't churn rows
     // (and re-notify people) who were already on the item.
@@ -280,23 +302,56 @@ export function useWorkItems(
       const removed = current.filter(uid => !assigneeIds.includes(uid))
 
       if (added.length > 0) {
-        await supabase.from('work_item_assignees').insert(
+        // Only notify the people whose rows actually persisted. If RLS or
+        // anything else rejects the insert, say so instead of firing a
+        // notification for an assignment that never happened.
+        const { error: addErr } = await supabase.from('work_item_assignees').insert(
           added.map(uid => ({ work_item_id: id, user_id: uid, assigned_by: user.id }))
         )
-        await notifyAssignees(
-          added, user.id,
-          'New work item assigned',
-          `You were assigned to "${patch.title ?? 'a work item'}"`,
-          id, 'work_item_assigned',
-        )
+        if (addErr) {
+          toast.error("Couldn't add one or more assignees")
+        } else {
+          await notifyAssignees(
+            added, user.id,
+            'New work item assigned',
+            `${actor} assigned you to "${title}"`,
+            id, 'work_item_assigned',
+          )
+        }
       }
       if (removed.length > 0) {
-        await supabase
+        const { error: rmErr } = await supabase
           .from('work_item_assignees')
           .delete()
           .eq('work_item_id', id)
           .in('user_id', removed)
+        if (rmErr) toast.error("Couldn't remove one or more assignees")
       }
+    }
+
+    // Notify the people on the item (minus the actor) about the change itself.
+    // A status move is worded distinctly; any other field edit is "updated".
+    const finalAssignees = assigneeIds ?? (old?.assignees || []).map(a => a.user_id)
+    const audience = Array.from(new Set([...(old ? [old.created_by] : []), ...finalAssignees]))
+    const statusMoved = patch.status !== undefined && old && patch.status !== old.status
+    const fieldsChanged = old && (
+      (patch.title !== undefined && patch.title !== old.title) ||
+      (patch.description !== undefined && (patch.description || '') !== (old.description || '')) ||
+      (patch.priority !== undefined && patch.priority !== old.priority) ||
+      (patch.due_date !== undefined && (patch.due_date || null) !== (old.due_date || null))
+    )
+    if (statusMoved) {
+      await notifyAssignees(
+        audience, user.id, 'Work item updated',
+        `${actor} moved "${title}" to ${patch.status!.replace(/_/g, ' ')}`,
+        id, 'work_item_status_changed',
+      )
+    } else if (fieldsChanged) {
+      await notifyAssignees(
+        audience, user.id, 'Work item updated',
+        `${actor} updated "${title}"`,
+        id, 'work_item_updated',
+      )
     }
 
     toast.success('Work item updated')
@@ -324,12 +379,13 @@ export function useWorkItems(
       return
     }
 
-    const others = (item.assignees || []).map(a => a.user_id)
+    const others = Array.from(new Set([item.created_by, ...(item.assignees || []).map(a => a.user_id)]))
     if (user && others.length > 0) {
+      const actor = await getActorName(supabase)
       await notifyAssignees(
         others, user.id,
         'Work item updated',
-        `"${item.title}" moved to ${status.replace(/_/g, ' ')}`,
+        `${actor} moved "${item.title}" to ${status.replace(/_/g, ' ')}`,
         item.id, 'work_item_status_changed',
       )
     }
@@ -436,7 +492,7 @@ export function useWorkItem(id: string | undefined): UseWorkItemResult {
         setNotFound(true)
         setItem(null)
       } else {
-        setItem(data as unknown as WorkItem)
+        setItem(flattenWorkItem(data))
       }
       setLoading(false)
     }
@@ -471,11 +527,15 @@ export function useWorkItem(id: string | undefined): UseWorkItemResult {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return false
 
+    const old = item
     const { error } = await supabase.from('work_items').update(patch as never).eq('id', id)
     if (error) {
       toast.error(error.message || 'Could not save changes')
       return false
     }
+
+    const actor = await getActorName(supabase)
+    const title = patch.title ?? old?.title ?? 'a work item'
 
     if (assigneeIds) {
       const { data: existing } = await supabase
@@ -488,14 +548,36 @@ export function useWorkItem(id: string | undefined): UseWorkItemResult {
       const removed = current.filter(uid => !assigneeIds.includes(uid))
 
       if (added.length > 0) {
-        await supabase.from('work_item_assignees').insert(
+        // Only notify people whose rows actually persisted.
+        const { error: addErr } = await supabase.from('work_item_assignees').insert(
           added.map(uid => ({ work_item_id: id, user_id: uid, assigned_by: user.id }))
         )
-        await notify(added, user.id, 'New work item assigned', `You were assigned to "${patch.title ?? item?.title ?? 'a work item'}"`, 'work_item_assigned')
+        if (addErr) {
+          toast.error("Couldn't add one or more assignees")
+        } else {
+          await notify(added, user.id, 'New work item assigned', `${actor} assigned you to "${title}"`, 'work_item_assigned')
+        }
       }
       if (removed.length > 0) {
-        await supabase.from('work_item_assignees').delete().eq('work_item_id', id).in('user_id', removed)
+        const { error: rmErr } = await supabase.from('work_item_assignees').delete().eq('work_item_id', id).in('user_id', removed)
+        if (rmErr) toast.error("Couldn't remove one or more assignees")
       }
+    }
+
+    // Notify the item's people (minus the actor) about the change.
+    const finalAssignees = assigneeIds ?? (old?.assignees || []).map(a => a.user_id)
+    const audience = Array.from(new Set([...(old ? [old.created_by] : []), ...finalAssignees]))
+    const statusMoved = patch.status !== undefined && old && patch.status !== old.status
+    const fieldsChanged = old && (
+      (patch.title !== undefined && patch.title !== old.title) ||
+      (patch.description !== undefined && (patch.description || '') !== (old.description || '')) ||
+      (patch.priority !== undefined && patch.priority !== old.priority) ||
+      (patch.due_date !== undefined && (patch.due_date || null) !== (old.due_date || null))
+    )
+    if (statusMoved) {
+      await notify(audience, user.id, 'Work item updated', `${actor} moved "${title}" to ${patch.status!.replace(/_/g, ' ')}`, 'work_item_status_changed')
+    } else if (fieldsChanged) {
+      await notify(audience, user.id, 'Work item updated', `${actor} updated "${title}"`, 'work_item_updated')
     }
 
     toast.success('Work item updated')
@@ -516,9 +598,10 @@ export function useWorkItem(id: string | undefined): UseWorkItemResult {
       return
     }
 
-    const others = (item.assignees || []).map(a => a.user_id)
+    const others = Array.from(new Set([item.created_by, ...(item.assignees || []).map(a => a.user_id)]))
     if (user && others.length > 0) {
-      await notify(others, user.id, 'Work item updated', `"${item.title}" moved to ${status.replace(/_/g, ' ')}`, 'work_item_status_changed')
+      const actor = await getActorName(supabase)
+      await notify(others, user.id, 'Work item updated', `${actor} moved "${item.title}" to ${status.replace(/_/g, ' ')}`, 'work_item_status_changed')
     }
   }
 
