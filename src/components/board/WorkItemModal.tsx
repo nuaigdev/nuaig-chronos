@@ -27,9 +27,9 @@ interface WorkItemModalProps {
   lockedProjectId?: string
   /**
    * When true, the assignee list is narrowed to members of the selected
-   * project. Used for employees: they may assign anyone on the project
-   * (cross-department included), but not arbitrary company staff. Admins and
-   * managers pass false and see everyone.
+   * project (cross-department included, but not arbitrary company staff).
+   * Passed true for everyone — admins and managers included — since work is
+   * assigned to people on the project. Enforced in RLS too (migration 023).
    */
   restrictToProjectMembers?: boolean
   onCreate: (input: CreateWorkItemInput) => Promise<boolean>

@@ -340,9 +340,9 @@ export default function ProjectDetailPage() {
         people={people}
         showPriority={settings.showPriority}
         lockedProjectId={id}
-        // On a project, employees assign from its members (any department);
-        // managers/admins from everyone. Enforced in RLS too (migration 023).
-        restrictToProjectMembers={!canManageProjects}
+        // Everyone assigns from the project's members (any department).
+        // Enforced in RLS too (migration 023).
+        restrictToProjectMembers
         onCreate={createWorkItem}
         onUpdate={updateWorkItem}
       />

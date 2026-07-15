@@ -5,19 +5,21 @@
 --
 -- Run AFTER 022 (which creates get_work_item_project).
 --
--- CHANGE 1 — who an employee may assign.
---   Migration 020 let an employee assign only their own
---   *department* teammates. But a project can span
---   departments, and work is filed against a project. So
---   an employee should be able to assign anyone who is a
---   *member of the item's project*, cross-department
---   included. That is this change.
+-- CHANGE 1 — assign by project membership, for EVERYONE.
+--   Work is filed against a project, and a project can
+--   span departments. So the person you assign must be a
+--   *member of the item's project* — and that applies to
+--   admins and managers too, not just employees. To assign
+--   someone who isn't on the project, add them to the
+--   project first.
+--
+--   (Migration 020 had let employees assign only their own
+--   *department* teammates, and left admins/managers able
+--   to assign anyone. Both of those are superseded here.)
 --
 --   Department confinement still governs BOARD VISIBILITY
 --   (an employee's team board still shows their own
---   department) — only the assignment rule moves to
---   project membership. Admins/managers are unchanged:
---   they may assign anyone.
+--   department) — only the assignment rule changes.
 --
 -- CHANGE 2 — backfill assigned_by.
 --   Populate any NULL assigned_by with the work item's
@@ -42,18 +44,19 @@ CREATE POLICY "Managers and creators manage assignees"
   )
   WITH CHECK (
     get_work_item_company(work_item_id) = get_user_company_id(auth.uid())
-    AND (
-      -- Managers and admins may assign anyone, in any department.
-      get_user_role(auth.uid()) IN ('admin', 'manager')
 
-      -- An employee may assign anyone who is a member of the item's
-      -- project — cross-department included — on an item they raised.
-      -- (Was: only same-department teammates, in migration 020.)
-      OR (
-        get_work_item_creator(work_item_id) = auth.uid()
-        AND is_project_member(get_work_item_project(work_item_id), user_id)
-      )
+    -- The actor must be authorised to manage this item's assignees:
+    -- an admin, a manager, or the person who raised it.
+    AND (
+      get_user_role(auth.uid()) IN ('admin', 'manager')
+      OR get_work_item_creator(work_item_id) = auth.uid()
     )
+
+    -- AND the assignee must be a member of the item's project — for
+    -- EVERYONE, admins and managers included. You assign work to people
+    -- who are on the project; to add someone else, add them to the
+    -- project first.
+    AND is_project_member(get_work_item_project(work_item_id), user_id)
   );
 
 

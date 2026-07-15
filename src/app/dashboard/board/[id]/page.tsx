@@ -224,7 +224,7 @@ export default function WorkItemDetailPage() {
         people={people}
         showPriority={settings.showPriority}
         lockedProjectId={item.project_id}
-        restrictToProjectMembers={!canManage}
+        restrictToProjectMembers
         onCreate={async () => false}
         onUpdate={(_, patch, assigneeIds) => updateItem(patch, assigneeIds)}
       />

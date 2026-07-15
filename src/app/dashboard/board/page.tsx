@@ -531,9 +531,9 @@ export default function WorkBoardPage() {
         people={people}
         showPriority={settings.showPriority}
         lockedProjectId={scopeType === 'project' && !editing ? projectId : undefined}
-        // Employees pick from the project's members (cross-department included);
-        // managers/admins from everyone. Enforced in RLS too (migration 023).
-        restrictToProjectMembers={!canManage}
+        // Everyone — admins and managers included — assigns from the project's
+        // members (cross-department included). Enforced in RLS too (migration 023).
+        restrictToProjectMembers
         onCreate={createWorkItem}
         onUpdate={updateWorkItem}
       />
