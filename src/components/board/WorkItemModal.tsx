@@ -152,9 +152,11 @@ export default function WorkItemModal({
   }
 
   // The pool you may pick from. When restricted, it's the selected project's
-  // members; otherwise the full list passed in.
-  const candidatePool = restrictToProjectMembers && memberIds !== null
-    ? people.filter(p => memberIds.includes(p.id))
+  // members — and NOBODY until a project is chosen (memberIds === null means
+  // no project selected yet, or its members are still loading). Falling back
+  // to the full company list here is what wrongly showed everyone up front.
+  const candidatePool = restrictToProjectMembers
+    ? (memberIds === null ? [] : people.filter(p => memberIds.includes(p.id)))
     : people
 
   const filteredPeople = candidatePool.filter(p => {
@@ -296,7 +298,11 @@ export default function WorkItemModal({
             <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
               {filteredPeople.length === 0 ? (
                 <div style={{ padding: '20px', textAlign: 'center', fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
-                  Nobody matches that search
+                  {restrictToProjectMembers && !projectId
+                    ? 'Select a project first to choose assignees'
+                    : restrictToProjectMembers && memberIds !== null && memberIds.length === 0
+                      ? 'This project has no members yet'
+                      : 'Nobody matches that search'}
                 </div>
               ) : (
                 filteredPeople.map(person => {
