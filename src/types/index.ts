@@ -6,13 +6,6 @@ export type UserRole = 'admin' | 'manager' | 'employee'
 export type ProjectStatus = 'active' | 'archived' | 'completed'
 export type TaskStatus = 'todo' | 'in_progress' | 'completed'
 export type TimesheetStatus = 'draft' | 'submitted' | 'approved' | 'rejected'
-
-// Work Board — the three kanban lanes.
-// Deliberately distinct from TaskStatus, which belongs to the
-// legacy `tasks` table and is not used by the board.
-export type WorkItemStatus = 'not_started' | 'in_progress' | 'done'
-export type WorkItemPriority = 'low' | 'medium' | 'high'
-
 export type NotificationType =
   | 'timesheet_submitted'
   | 'timesheet_approved'
@@ -20,12 +13,6 @@ export type NotificationType =
   | 'time_log_reminder'
   | 'timesheet_reminder'
   | 'pending_approval_alert'
-  | 'work_item_assigned'
-  | 'work_item_status_changed'
-  | 'work_item_due_soon'
-  | 'work_item_commented'
-  | 'work_item_mentioned'
-  | 'work_item_updated'
 
 // Department is now a free-text string (migration 009 dropped the enum).
 // The six seed values are kept as a convenience constant but the type is open.
@@ -158,74 +145,6 @@ export interface Task {
   assignee?: Profile
   logged_hours?: number
 }
-
-// ============================================
-// WORK BOARD
-// ============================================
-
-/**
- * A card on the Work Board.
- *
- * Note there is no `department` field: projects can span
- * departments, so an item has no single owning department.
- * The team board is derived from the departments of the
- * item's assignees instead.
- */
-export interface WorkItem {
-  id: string
-  title: string
-  description?: string
-  status: WorkItemStatus
-  priority: WorkItemPriority
-  project_id: string
-  due_date?: string
-  position: number
-  completed_at?: string
-  company_id: string
-  created_by: string
-  created_at: string
-  updated_at: string
-  // Joined
-  project?: Project
-  creator?: Profile
-  assignees?: WorkItemAssignee[]
-  comment_count?: number   // flattened from work_item_comments(count)
-}
-
-export interface WorkItemAssignee {
-  id: string
-  work_item_id: string
-  user_id: string
-  assigned_by?: string
-  assigned_at: string
-  // Joined
-  user?: Profile
-  assigner?: Profile   // who assigned this person (work_item_assignees.assigned_by)
-}
-
-export interface WorkItemComment {
-  id: string
-  work_item_id: string
-  user_id: string
-  body: string
-  mentioned_user_ids?: string[]
-  edited_at?: string
-  company_id: string
-  created_at: string
-  updated_at: string
-  // Joined
-  user?: Profile
-  mentions?: Profile[]   // resolved names for the mentioned_user_ids, for rendering
-}
-
-export const WORK_ITEM_STATUS_LABELS: Record<WorkItemStatus, string> = {
-  not_started: 'Not Started',
-  in_progress: 'In Progress',
-  done: 'Done',
-}
-
-// Lane order, left to right.
-export const WORK_ITEM_LANES: WorkItemStatus[] = ['not_started', 'in_progress', 'done']
 
 // Master task type row (department-scoped)
 export interface TaskType {
@@ -467,42 +386,6 @@ interface TaskTypeRow {
   created_at: string
 }
 
-interface WorkItemRow {
-  id: string
-  title: string
-  description: string | null
-  status: WorkItemStatus
-  priority: WorkItemPriority
-  project_id: string
-  due_date: string | null
-  position: number
-  completed_at: string | null
-  company_id: string
-  created_by: string
-  created_at: string
-  updated_at: string
-}
-
-interface WorkItemAssigneeRow {
-  id: string
-  work_item_id: string
-  user_id: string
-  assigned_by: string | null
-  assigned_at: string
-}
-
-interface WorkItemCommentRow {
-  id: string
-  work_item_id: string
-  user_id: string
-  body: string
-  mentioned_user_ids: string[]
-  edited_at: string | null
-  company_id: string
-  created_at: string
-  updated_at: string
-}
-
 interface TimesheetRow {
   id: string
   user_id: string
@@ -675,44 +558,6 @@ export interface Database {
           company_id: string
         }
         Update: Partial<TaskTypeRow>
-        Relationships: []
-      }
-      work_items: {
-        Row: WorkItemRow
-        Insert: {
-          title: string
-          description?: string | null
-          status?: WorkItemStatus
-          priority?: WorkItemPriority
-          project_id: string
-          due_date?: string | null
-          position?: number
-          company_id?: string
-          created_by: string
-        }
-        Update: Partial<WorkItemRow>
-        Relationships: []
-      }
-      work_item_assignees: {
-        Row: WorkItemAssigneeRow
-        Insert: {
-          work_item_id: string
-          user_id: string
-          assigned_by?: string | null
-        }
-        Update: Partial<WorkItemAssigneeRow>
-        Relationships: []
-      }
-      work_item_comments: {
-        Row: WorkItemCommentRow
-        Insert: {
-          work_item_id: string
-          user_id: string
-          body: string
-          mentioned_user_ids?: string[]
-          company_id?: string
-        }
-        Update: Partial<WorkItemCommentRow>
         Relationships: []
       }
       timesheets: {

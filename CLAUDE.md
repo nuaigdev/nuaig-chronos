@@ -29,7 +29,7 @@ Database is Supabase (PostgreSQL). Migrations live in `supabase/migrations/` and
 
 ### Auth & Roles
 
-`src/hooks/useProfile.tsx` is the auth hook. It provides `user`, `profile`, `company`, and role helpers (`isAdmin`, `isManager`, `isEmployee`, `canManageProjects`). It is a **plain per-component hook — there is no context and no provider**. Each component that needs user data calls `useProfile()` directly. (It replaced an older `useAuth`/`AuthProvider` pattern whose defensive guards still caused stuck spinners; do not reintroduce a provider.)
+`src/hooks/useAuth.tsx` is the central auth context. It provides `user`, `profile`, and role helpers (`isAdmin`, `isManager`, `isEmployee`, `canManageProjects`). Wrap the entire app — the root `AuthProvider` already does this in `src/app/layout.tsx`.
 
 Three roles defined as a PostgreSQL ENUM: `admin | manager | employee`. These drive all access control via RLS policies on the database and conditional rendering on the frontend.
 
@@ -38,7 +38,7 @@ Three roles defined as a PostgreSQL ENUM: `admin | manager | employee`. These dr
 ### Data Access Pattern
 
 Pages follow a consistent shape:
-1. Call `useProfile()` for user/role context
+1. Call `useAuth()` for user/role context
 2. Fetch data in `useEffect` via the Supabase browser client (`src/lib/supabase/client.ts`)
 3. Filter by role (managers/admins see all; employees see only their own or assigned records)
 4. Show loading/empty states; use `toast.error()` for failures (react-hot-toast)
@@ -49,48 +49,11 @@ Use `src/lib/supabase/server.ts` for server-side data fetching (RSC or API route
 
 - `profiles` — extends `auth.users`; holds `role`, `department`, `manager_id`
 - `projects` + `project_members` — projects with team assignment (employees only see projects they're assigned to)
-- `task_types` — the department-scoped master list used by **timesheets** ("Code Review", "Standup"). Not the Work Board.
-- `tasks` — **legacy and dormant.** Admin-only RLS, single assignee, kept alive only because `time_logs.task_id` still references it. Do not build on it; use `work_items`.
-- `work_items` + `work_item_assignees` + `work_item_comments` — the Work Board (see below)
+- `tasks` — kanban status enum: `todo | in_progress | completed`
 - `timesheets` — weekly timesheets with approval workflow: `draft → submitted → approved/rejected`
 - `time_logs` — individual time entries linked to a project + optional task
 - `notifications` — consumed via Supabase Realtime in `src/hooks/useNotifications.ts`
-- `admin_settings` — key-value config. Value shape is always `{ "value": <primitive> }`; uniqueness is `(company_id, key)`.
-
-### Work Board (`/dashboard/board`)
-
-A simple kanban: three lanes (`not_started | in_progress | done`), multiple assignees per item, and two scopes crossed with two display modes (List / Board).
-
-- **Team scope** — pick a department; every item any of its members is assigned to, horizontally separated into one section per project.
-- **Project scope** — one project, no grouping. Also embedded on `/dashboard/projects/[id]`.
-- **Item detail** (`/dashboard/board/[id]`, `useWorkItem`) — clicking a card opens it: full fields, per-assignee "Assigned by", and a comment thread (`work_item_comments`, `useWorkItemComments`). Editing still goes through `WorkItemModal`; the page is view + discuss. Cards guard click-vs-drag by pointer distance so a sloppy drag doesn't navigate. Cards show a comment count (embedded as `comment_count:work_item_comments(count)`, flattened from PostgREST's `[{count}]` shape by `flattenWorkItem`).
-
-**Comments & @-mentions.** Comments support `@`-mentions **restricted to project members** — the composer only offers them, and a `BEFORE INSERT/UPDATE` trigger (migration 026) strips any `mentioned_user_ids` that aren't members of the item's project, so it's enforced server-side too. Mentions are stored as a `UUID[]` column (not inline tokens); rendering highlights `@Name` by matching the resolved mention names. Mentioned people get a distinct `work_item_mentioned` notification and are removed from the generic `work_item_commented` batch (no double-ping).
-
-**Notifications name the actor.** Every work-item notification is worded "‹Actor› commented/moved/assigned/updated …" via `getActorName()`. Field edits emit `work_item_updated`; status moves emit `work_item_status_changed`. Recipients are always the item's assignees + creator, minus the actor. Assignment notifications fire **only after the assignee row actually persists** — the reconciliation checks the insert error rather than notifying blindly (that was the "notified but not added" bug).
-
-Two design decisions that are easy to get wrong:
-
-1. **`work_items` has no `department` column, on purpose.** Projects span departments, so an item has no single owning department. The team board is derived from the departments of the item's *assignees*. The consequence is that an item with **zero assignees appears on no team board** — the board header surfaces an "Unassigned" count so those don't silently vanish.
-2. **Team scope is fetched in two steps** (`useWorkItems`), not one filtered join. A single `work_item_assignees!inner(...)` filtered by `user_id` would return only the *matching* assignees on each card, so an item shared across two departments would render a half-empty avatar list. Resolve the item IDs first, then fetch those items with their full assignee list.
-
-**Visibility (migrations 020, 022, 024).** Admins and managers see every department's board. Employees see only items their **department** is on, items in **projects they belong to**, or items they **raised**. The team-board department picker is locked to their own department. This rule lives in **one place**: the core `can_view_work_item(project_id, created_by, work_item_id, user_id)` `SECURITY DEFINER` function. **Do not inline or copy this predicate** — if comments and items get separate copies they drift, and an employee reads a discussion on an item they can't see, silently undoing the restriction.
-
-The core takes the columns **as arguments**, and the `work_items` SELECT policy passes the **row's own columns** (`can_view_work_item(project_id, created_by, id, auth.uid())`). This is load-bearing: the app creates items with `INSERT … RETURNING id` (PostgREST `?select=id`), and RETURNING re-checks the SELECT policy against the new row. A predicate that **re-fetches the row by id** inside a `SECURITY DEFINER` sub-select (as migration 022 did) cannot see the still-uncommitted row, so every branch fails and non-admins get a 403 on create — migration 024 fixed exactly that. Callers that only have an id **and whose row is already committed** (the comment policies) use the `can_view_work_item_by_id(work_item_id, user_id)` wrapper, which fetches the columns then calls the core. Never point the `work_items` policy at the wrapper.
-
-**Assignment (migration 023).** *Who you can assign* is by **project membership, not department, for everyone including admins and managers**: the assignee must be a member of the item's project — cross-department included. To assign someone who isn't on the project, add them to the project first. (Department still governs board *visibility*, above; only assignment moved to project membership, because work is filed against a project and projects span departments.) The RLS `WITH CHECK` requires the actor be an admin/manager/creator **and** the assignee be a project member; the `USING` side still lets admin/manager/creator remove any existing assignee (so stale non-member rows can be cleaned up). The UI mirrors this: `WorkItemModal`'s `restrictToProjectMembers` (passed true everywhere) narrows the picker to the selected project's members. `assigned_by` is recorded per assignee and surfaced as "Assigned by" on the detail page and list view.
-
-Project scope stays cross-department on purpose (projects span departments by design). Note `work_item_assignees` SELECT stays company-wide **deliberately** — a card must render its full avatar row from whichever board it's viewed on. Visibility is gated on the work item, not on the assignee rows.
-
-Employees may create items only inside projects they belong to, and only while `board_employee_can_create` allows it. Assignees can always move their own cards between lanes.
-
-**Who can change assignees (migration 027):** admins, managers, the creator, **and any existing assignee** — an assignee may "extend" the item to other people. This deliberately matches the `work_items` UPDATE policy (which lets assignees edit the item), so there's no path where someone can edit the item but not its assignees — that asymmetry was the silent-reject half of the "notified but not added" bug. The added person must still be a project member.
-
-RLS helpers are all `SECURITY DEFINER` on purpose: the `work_item_assignees` policy reads `work_items` and vice versa, so a plain `EXISTS` subquery between them would recurse.
-
-Board settings live in `admin_settings` (Settings → Work Board): `board_employee_can_create`, `board_show_priority`, `board_archive_done_days` (hides Done items older than N days; 0 = never, nothing is deleted).
-
-Drag-and-drop is native HTML5 with no library. Those events never fire on touch, so `useIsMobile()` swaps in a status dropdown on small screens — keep both paths working.
+- `admin_settings` — key-value config (e.g., working hours per day)
 
 ### UI Conventions
 

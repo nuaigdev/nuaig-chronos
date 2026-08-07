@@ -5,14 +5,10 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useProfile } from '@/hooks/useProfile'
-import { useIsMobile } from '@/hooks/useIsMobile'
-import { useWorkItems, useBoardSettings, useCompanyPeople } from '@/hooks/useWorkItems'
-import { Project, TimeLog, Profile, WorkItem } from '@/types'
+import { Project, Task, TimeLog, Profile } from '@/types'
 import { StatusBadge, ProgressBar, EmptyState } from '@/components/ui'
-import KanbanLanes from '@/components/board/KanbanLanes'
-import WorkItemModal from '@/components/board/WorkItemModal'
 import { formatDate, formatHours, getInitials } from '@/utils'
-import { ArrowLeft, Clock, Users, CheckSquare, Calendar, Plus } from 'lucide-react'
+import { ArrowLeft, Clock, Users, CheckSquare, Calendar } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const supabase = createClient()
@@ -21,26 +17,15 @@ type EnrichedLog = TimeLog & { userName: string }
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const { user, profile, loading: authLoading, canManageProjects } = useProfile()
-  const isMobile = useIsMobile()
-  const { settings } = useBoardSettings()
-  const { people } = useCompanyPeople()
+  const { profile, loading: authLoading, canManageProjects } = useProfile()
 
   const [project, setProject] = useState<Project | null>(null)
+  const [tasks, setTasks] = useState<Task[]>([])
   const [members, setMembers] = useState<Profile[]>([])
   const [recentLogs, setRecentLogs] = useState<EnrichedLog[]>([])
   const [isMemberOfProject, setIsMemberOfProject] = useState(false)
   const [loggedHours, setLoggedHours] = useState(0)
   const [loading, setLoading] = useState(true)
-
-  const [modalOpen, setModalOpen] = useState(false)
-  const [editing, setEditing] = useState<WorkItem | null>(null)
-
-  // The project's Work Board. Replaces the legacy `tasks` table, which is
-  // dormant (admin-only RLS, single assignee) and stays untouched.
-  const {
-    items, createWorkItem, updateWorkItem, moveWorkItem, deleteWorkItem,
-  } = useWorkItems({ type: 'project', projectId: id }, settings.archiveDoneDays)
 
   useEffect(() => {
     if (!id || authLoading || !profile) return
@@ -49,7 +34,7 @@ export default function ProjectDetailPage() {
 
   const loadAll = async () => {
     setLoading(true)
-    await Promise.all([fetchProject(), fetchMembers(), fetchLogs()])
+    await Promise.all([fetchProject(), fetchTasks(), fetchMembers(), fetchLogs()])
     setLoading(false)
   }
 
@@ -63,10 +48,18 @@ export default function ProjectDetailPage() {
     setProject(data as unknown as Project)
   }
 
+  const fetchTasks = async () => {
+    const { data } = await supabase
+      .from('tasks')
+      .select('*, assignee:profiles!tasks_assigned_to_fkey(id, full_name)')
+      .eq('project_id', id)
+      .order('created_at', { ascending: false })
+    setTasks((data || []) as unknown as Task[])
+  }
+
   const fetchMembers = async () => {
     const { data: rows } = await supabase.from('project_members').select('user_id').eq('project_id', id)
     const ids = rows?.map(r => r.user_id) || []
-    setIsMemberOfProject(profile ? ids.includes(profile.id) : false)
     if (ids.length === 0) { setMembers([]); return }
     const { data } = await supabase.from('profiles').select('id, full_name, role, department').in('id', ids)
     setMembers((data || []) as unknown as Profile[])
@@ -118,23 +111,20 @@ export default function ProjectDetailPage() {
   }
 
   const client = project.client as { name: string } | undefined
-  const totalTasks = items.length
-  const completedTasks = items.filter(i => i.status === 'done').length
+  const totalTasks = tasks.length
+  const completedTasks = tasks.filter(t => t.status === 'completed').length
+  const taskPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
 
-  // Board permissions, mirroring /dashboard/board.
-  const canEditItem = (item: WorkItem) =>
-    canManageProjects ||
-    item.created_by === user?.id ||
-    (item.assignees || []).some(a => a.user_id === user?.id)
+  const grouped = {
+    todo: tasks.filter(t => t.status === 'todo'),
+    in_progress: tasks.filter(t => t.status === 'in_progress'),
+    completed: tasks.filter(t => t.status === 'completed'),
+  }
 
-  const canDeleteItem = (item: WorkItem) =>
-    canManageProjects || item.created_by === user?.id
-
-  const canCreate = canManageProjects || (settings.employeeCanCreate && isMemberOfProject)
-
-  const handleDeleteItem = async (itemId: string) => {
-    if (!confirm('Delete this work item? This cannot be undone.')) return
-    await deleteWorkItem(itemId)
+  const statusConfig: Record<string, { label: string; color: string }> = {
+    todo: { label: 'To Do', color: '#fbbf24' },
+    in_progress: { label: 'In Progress', color: '#60a5fa' },
+    completed: { label: 'Completed', color: '#34d399' },
   }
 
   return (
@@ -181,14 +171,12 @@ export default function ProjectDetailPage() {
         ))}
       </div>
 
-      {/* Work completion bar */}
+      {/* Task completion bar */}
       {totalTasks > 0 && (
         <div className="card-base" style={{ padding: '16px 20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '10px' }}>
-            <span style={{ fontWeight: 600 }}>Work Completion</span>
-            <span style={{ color: 'var(--chronos-text-muted)' }}>
-              {completedTasks} of {totalTasks} done ({Math.round((completedTasks / totalTasks) * 100)}%)
-            </span>
+            <span style={{ fontWeight: 600 }}>Task Completion</span>
+            <span style={{ color: 'var(--chronos-text-muted)' }}>{completedTasks} of {totalTasks} completed ({taskPct}%)</span>
           </div>
           <ProgressBar value={completedTasks} max={totalTasks} />
         </div>
@@ -196,44 +184,53 @@ export default function ProjectDetailPage() {
 
       {/* Main content: Tasks + Sidebar */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '20px', alignItems: 'start' }}>
-        {/* Project Work Board */}
+        {/* Tasks kanban */}
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', gap: '12px' }}>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 700 }}>Work Board</h2>
-            {canCreate && (
-              <button className="btn-secondary" onClick={() => { setEditing(null); setModalOpen(true) }} style={{ fontSize: '12px', padding: '6px 10px' }}>
-                <Plus size={13} />
-                New Work Item
-              </button>
-            )}
-          </div>
-
-          {items.length === 0 ? (
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 700, marginBottom: '14px' }}>Tasks</h2>
+          {tasks.length === 0 ? (
             <EmptyState
               icon={<CheckSquare size={24} />}
-              title="No work items yet"
-              description="Add the first piece of work for this project."
-              action={canCreate ? (
-                <button className="btn-primary" onClick={() => { setEditing(null); setModalOpen(true) }}>
-                  <Plus size={15} />
-                  New Work Item
-                </button>
-              ) : undefined}
+              title="No tasks yet"
+              description="Task types are managed by admins per department."
             />
           ) : (
-            <KanbanLanes
-              items={items}
-              showPriority={settings.showPriority}
-              isMobile={isMobile}
-              selectable={false}
-              selectedIds={[]}
-              onToggleSelect={() => {}}
-              canEditItem={canEditItem}
-              canDeleteItem={canDeleteItem}
-              onEdit={item => { setEditing(item); setModalOpen(true) }}
-              onDelete={handleDeleteItem}
-              onMove={moveWorkItem}
-            />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+              {(Object.entries(grouped) as [string, Task[]][]).map(([status, statusTasks]) => (
+                <div key={status} className="card-base" style={{ overflow: 'hidden' }}>
+                  <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--chronos-border)', display: 'flex', alignItems: 'center', gap: '7px' }}>
+                    <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: statusConfig[status].color, flexShrink: 0 }} />
+                    <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '12px' }}>{statusConfig[status].label}</span>
+                    <span style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--chronos-text-muted)', background: 'var(--chronos-surface-2)', padding: '1px 7px', borderRadius: '100px' }}>{statusTasks.length}</span>
+                  </div>
+                  <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {statusTasks.length === 0 ? (
+                      <div style={{ padding: '16px', textAlign: 'center', fontSize: '12px', color: 'var(--chronos-text-muted)' }}>Empty</div>
+                    ) : (
+                      statusTasks.map(task => {
+                        const assignee = task.assignee as { full_name: string } | undefined
+                        return (
+                          <div key={task.id} style={{ padding: '10px', borderRadius: '8px', background: 'var(--chronos-surface-2)', border: '1px solid transparent', transition: 'border-color 0.15s' }}
+                            onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--chronos-border)'}
+                            onMouseLeave={e => e.currentTarget.style.borderColor = 'transparent'}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px', marginBottom: '4px' }}>
+                              <span style={{ fontSize: '12px', fontWeight: 600, flex: 1 }}>{task.name}</span>
+
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '6px' }}>
+                              {assignee && <span style={{ fontSize: '10px', color: 'var(--chronos-text-muted)', background: 'var(--chronos-surface)', padding: '1px 6px', borderRadius: '100px' }}>{assignee.full_name}</span>}
+                              {task.estimated_hours && <span style={{ fontSize: '10px', color: 'var(--chronos-text-muted)', display: 'flex', alignItems: 'center', gap: '2px' }}><Clock size={8} />{task.estimated_hours}h</span>}
+                              {task.due_date && <span style={{ fontSize: '10px', color: 'var(--chronos-text-muted)' }}>{task.due_date}</span>}
+                            </div>
+
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
@@ -331,21 +328,6 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* Project is fixed here — you are already inside it. */}
-      <WorkItemModal
-        isOpen={modalOpen}
-        onClose={() => { setModalOpen(false); setEditing(null) }}
-        editing={editing}
-        projects={project ? [project] : []}
-        people={people}
-        showPriority={settings.showPriority}
-        lockedProjectId={id}
-        // Everyone assigns from the project's members (any department).
-        // Enforced in RLS too (migration 023).
-        restrictToProjectMembers
-        onCreate={createWorkItem}
-        onUpdate={updateWorkItem}
-      />
     </div>
   )
 }

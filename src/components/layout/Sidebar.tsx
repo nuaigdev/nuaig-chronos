@@ -10,7 +10,7 @@ import { getInitials } from '@/utils'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  LayoutDashboard, FolderKanban, FileText, KanbanSquare,
+  LayoutDashboard, FolderKanban, FileText,
   Users, BarChart3, Settings, Bell, Building2, LogOut, KeyRound, X, Layers, Sun, Moon
 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -22,7 +22,6 @@ const NAV_ITEMS = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', roles: ['admin', 'manager', 'employee'] },
   { href: '/dashboard/clients', icon: Building2, label: 'Clients', roles: ['admin', 'manager'] },
   { href: '/dashboard/projects', icon: FolderKanban, label: 'Projects', roles: ['admin', 'manager', 'employee'] },
-  { href: '/dashboard/board', icon: KanbanSquare, label: 'Work Board', roles: ['admin', 'manager', 'employee'] },
   { href: '/dashboard/timesheets', icon: FileText, label: 'Timesheets', roles: ['admin', 'manager', 'employee'] },
   { href: '/dashboard/approvals', icon: FileText, label: 'Approvals', roles: ['admin', 'manager'] },
   { href: '/dashboard/team', icon: Users, label: 'Team', roles: ['admin', 'manager'] },
