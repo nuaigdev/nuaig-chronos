@@ -7,7 +7,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { Project, Profile } from '@/types'
 import { StatusBadge, EmptyState, Modal, FormField, Select, ProgressBar } from '@/components/ui'
 import { formatDate, formatHours, getInitials } from '@/utils'
-import { FolderKanban, Plus, Search, Archive, Edit2, Clock, Users, UserPlus, X, Trash2 } from 'lucide-react'
+import { FolderKanban, Plus, Search, Archive, Edit2, Clock, Users, UserPlus, X, Trash2, Crown } from 'lucide-react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 
@@ -23,7 +23,8 @@ export default function ProjectsPage() {
   const [statusFilter, setStatusFilter] = useState('active')
   const [showModal, setShowModal] = useState(false)
   const [editProject, setEditProject] = useState<Project | null>(null)
-  const [form, setForm] = useState({ name: '', description: '', client_id: '', start_date: '', end_date: '', estimated_hours: '', budget: '' })
+  const [form, setForm] = useState({ name: '', description: '', client_id: '', start_date: '', end_date: '', estimated_hours: '', budget: '', owner_id: '' })
+  const [ownerOptions, setOwnerOptions] = useState<Profile[]>([])
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
@@ -42,7 +43,8 @@ export default function ProjectsPage() {
     if (authLoading || !profile) return
     fetchProjects(profile.id, canManageProjects)
     fetchClients()
-  }, [authLoading, statusFilter, profile?.id, canManageProjects])
+    if (isAdmin) fetchOwnerOptions()
+  }, [authLoading, statusFilter, profile?.id, canManageProjects, isAdmin])
 
   const fetchProjects = async (profileId: string, canManage: boolean) => {
     setLoading(true)
@@ -90,6 +92,16 @@ export default function ProjectsPage() {
     setLoading(false)
   }
 
+  // Candidates for project ownership (admins only) — any active user in the company.
+  const fetchOwnerOptions = async () => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, full_name, role')
+      .eq('is_active', true)
+      .order('full_name')
+    setOwnerOptions((data || []) as unknown as Profile[])
+  }
+
   const fetchClients = async () => {
     const { data } = await supabase.from('clients').select('id, name').eq('is_active', true).order('name')
     setClients(data || [])
@@ -97,7 +109,7 @@ export default function ProjectsPage() {
 
   const openCreate = () => {
     setEditProject(null)
-    setForm({ name: '', description: '', client_id: '', start_date: '', end_date: '', estimated_hours: '', budget: '' })
+    setForm({ name: '', description: '', client_id: '', start_date: '', end_date: '', estimated_hours: '', budget: '', owner_id: profile?.id || '' })
     setShowModal(true)
   }
 
@@ -111,8 +123,19 @@ export default function ProjectsPage() {
       end_date: p.end_date || '',
       estimated_hours: p.estimated_hours?.toString() || '',
       budget: p.budget?.toString() || '',
+      owner_id: p.created_by || '',
     })
     setShowModal(true)
+  }
+
+  // Add someone to a project, treating "already a member" as success.
+  const ensureMember = async (projectId: string, userId: string) => {
+    const { error } = await supabase.from('project_members').insert({
+      project_id: projectId,
+      user_id: userId,
+      assigned_by: profile!.id,
+    })
+    if (error && error.code !== '23505') throw error // 23505 = unique violation
   }
 
   const handleSave = async () => {
@@ -129,22 +152,27 @@ export default function ProjectsPage() {
         budget: form.budget ? parseFloat(form.budget) : null,
       }
       if (editProject) {
-        const { error } = await supabase.from('projects').update(payload).eq('id', editProject.id)
+        // Only admins may reassign ownership, and only to a different person.
+        const newOwnerId = isAdmin && form.owner_id && form.owner_id !== editProject.created_by ? form.owner_id : null
+        const { error } = await supabase
+          .from('projects')
+          .update(newOwnerId ? { ...payload, created_by: newOwnerId } : payload)
+          .eq('id', editProject.id)
         if (error) throw error
-        toast.success('Project updated!')
+        // The owner must always be on the team.
+        if (newOwnerId) await ensureMember(editProject.id, newOwnerId)
+        toast.success(newOwnerId ? 'Project updated — owner changed' : 'Project updated!')
       } else {
+        const ownerId = (isAdmin && form.owner_id) || profile!.id
         const { data: newProject, error } = await supabase
           .from('projects')
-          .insert({ ...payload, created_by: profile!.id, company_id: profile!.company_id })
+          .insert({ ...payload, created_by: ownerId, company_id: profile!.company_id })
           .select('id')
           .single()
         if (error) throw error
-        // Auto-add creator as a member
-        await supabase.from('project_members').insert({
-          project_id: newProject.id,
-          user_id: profile!.id,
-          assigned_by: profile!.id,
-        })
+        // Auto-add creator (and the owner, when different) as members
+        await ensureMember(newProject.id, profile!.id)
+        if (ownerId !== profile!.id) await ensureMember(newProject.id, ownerId)
         toast.success('Project created!')
       }
       setShowModal(false)
@@ -240,6 +268,16 @@ export default function ProjectsPage() {
     setLoadingMembers(true)
     await Promise.all([fetchProjectMembersForModal(membersProjectId), fetchAvailableMembers(membersProjectId)])
     setLoadingMembers(false)
+    if (profile) fetchProjects(profile.id, canManageProjects)
+  }
+
+  // Admins only — hand the project over to another member.
+  const changeOwner = async (userId: string, name: string) => {
+    if (!confirm(`Make ${name} the owner of "${membersProjectName}"?`)) return
+    const { error } = await supabase.from('projects').update({ created_by: userId }).eq('id', membersProjectId)
+    if (error) { toast.error('Failed to change owner'); return }
+    setMembersProjectCreatedBy(userId)
+    toast.success(`${name} is now the project owner`)
     if (profile) fetchProjects(profile.id, canManageProjects)
   }
 
@@ -381,37 +419,63 @@ export default function ProjectsPage() {
 
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--chronos-border)', paddingTop: '10px' }}>
                   {/* Member avatars — click to manage (managers) or view (employees) */}
-                  <button
-                    onClick={() => openMembersModal(p.id, p.name, p.created_by)}
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', borderRadius: '6px' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--chronos-surface-2)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                    title={canManageProjects ? 'Manage members' : 'View members'}
-                  >
-                    {members.slice(0, 4).map((m, i) => (
-                      <div key={i} style={{
-                        width: '24px', height: '24px', borderRadius: '6px',
-                        background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '9px', fontWeight: 700, color: 'white',
-                        marginLeft: i > 0 ? '-6px' : '0',
-                        border: '2px solid var(--chronos-surface)',
-                        fontFamily: 'var(--font-display)',
-                      }}>
-                        {getInitials(m.user.full_name)}
-                      </div>
-                    ))}
-                    {members.length > 4 && (
-                      <div style={{ width: '24px', height: '24px', borderRadius: '6px', background: 'var(--chronos-surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: 'var(--chronos-text-muted)', marginLeft: '-6px', border: '2px solid var(--chronos-surface)' }}>
-                        +{members.length - 4}
-                      </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                    <button
+                      onClick={() => openMembersModal(p.id, p.name, p.created_by)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', borderRadius: '6px' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'var(--chronos-surface-2)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                      title={canManageProjects ? 'Manage members' : 'View members'}
+                    >
+                      {members.slice(0, 4).map((m, i) => (
+                        <div key={i} style={{
+                          width: '24px', height: '24px', borderRadius: '6px',
+                          background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '9px', fontWeight: 700, color: 'white',
+                          marginLeft: i > 0 ? '-6px' : '0',
+                          border: '2px solid var(--chronos-surface)',
+                          fontFamily: 'var(--font-display)',
+                        }}>
+                          {getInitials(m.user.full_name)}
+                        </div>
+                      ))}
+                      {members.length > 4 && (
+                        <div style={{ width: '24px', height: '24px', borderRadius: '6px', background: 'var(--chronos-surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: 'var(--chronos-text-muted)', marginLeft: '-6px', border: '2px solid var(--chronos-surface)' }}>
+                          +{members.length - 4}
+                        </div>
+                      )}
+                      {members.length === 0 && (
+                        <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Users size={12} />No members
+                        </span>
+                      )}
+                    </button>
+                    {canManageProjects && (
+                      <button
+                        onClick={() => openMembersModal(p.id, p.name, p.created_by)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0,
+                          padding: '4px 9px', borderRadius: '100px', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+                          border: '1px dashed var(--chronos-border)', background: 'transparent', color: 'var(--chronos-text-muted)',
+                          transition: 'all 0.15s',
+                        }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.borderColor = 'var(--chronos-accent)'
+                          e.currentTarget.style.color = 'var(--chronos-accent)'
+                          e.currentTarget.style.background = 'var(--chronos-accent-glow)'
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.borderColor = 'var(--chronos-border)'
+                          e.currentTarget.style.color = 'var(--chronos-text-muted)'
+                          e.currentTarget.style.background = 'transparent'
+                        }}
+                        title="Add team members"
+                      >
+                        <UserPlus size={12} />Add
+                      </button>
                     )}
-                    {members.length === 0 && (
-                      <span style={{ fontSize: '12px', color: 'var(--chronos-text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <Users size={12} />{canManageProjects ? 'Add members' : 'No members'}
-                      </span>
-                    )}
-                  </button>
+                  </div>
                   <div style={{ display: 'flex', gap: '12px', fontSize: '12px', color: 'var(--chronos-text-muted)' }}>
                     {p.end_date && (
                       <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -438,6 +502,21 @@ export default function ProjectsPage() {
           <FormField label="Client">
             <Select value={form.client_id} onChange={v => setForm(f => ({ ...f, client_id: v }))} options={clients.map(c => ({ value: c.id, label: c.name }))} placeholder="Select client" />
           </FormField>
+          {isAdmin && (
+            <FormField label="Project Owner">
+              <Select
+                value={form.owner_id}
+                onChange={v => setForm(f => ({ ...f, owner_id: v }))}
+                options={ownerOptions.some(u => u.id === form.owner_id) || !form.owner_id
+                  ? ownerOptions.map(u => ({ value: u.id, label: `${u.full_name} · ${u.role}` }))
+                  : [{ value: form.owner_id, label: 'Current owner' }, ...ownerOptions.map(u => ({ value: u.id, label: `${u.full_name} · ${u.role}` }))]}
+                placeholder="Select owner"
+              />
+              <p style={{ fontSize: '11px', color: 'var(--chronos-text-muted)', marginTop: '6px' }}>
+                The owner is added to the team automatically and can&apos;t be removed from it.
+              </p>
+            </FormField>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             <FormField label="Start Date">
               <input type="date" className="input-base" value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} />
@@ -494,6 +573,13 @@ export default function ProjectsPage() {
                       </div>
                       {isOwner && (
                         <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '100px', background: 'rgba(167,139,250,0.15)', color: 'var(--chronos-accent)', border: '1px solid rgba(167,139,250,0.3)', flexShrink: 0 }}>OWNER</span>
+                      )}
+                      {isAdmin && !isOwner && (
+                        <button onClick={() => changeOwner(m.id, m.full_name)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px', borderRadius: '4px' }}
+                          onMouseEnter={e => e.currentTarget.style.color = 'var(--chronos-accent)'}
+                          onMouseLeave={e => e.currentTarget.style.color = 'var(--chronos-text-muted)'}
+                          title="Make project owner"
+                        ><Crown size={14} /></button>
                       )}
                       {canManageProjects && !isOwner && (isAdmin || m.manager_id === profile?.id || m.id === profile?.id) && (
                         <button onClick={() => removeMember(m.id, m.manager_id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chronos-text-muted)', padding: '4px', borderRadius: '4px' }}
